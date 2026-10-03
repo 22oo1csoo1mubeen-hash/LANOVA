@@ -73,13 +73,13 @@ export default function AuthPage() {
   // Derive current tab from URL
   const urlTab = location.pathname === '/register' ? 'register' : 'login';
   const [tab, setTab] = useState(urlTab);
-  // panelKey changes on every tab switch so React remounts the panel
-  // and the CSS animation replays from scratch
+  const [direction, setDirection] = useState('forward');
   const [panelKey, setPanelKey] = useState(0);
 
   // Keep tab in sync if user navigates with browser back/forward
   useEffect(() => {
     if (urlTab !== tab) {
+      setDirection(urlTab === 'register' ? 'forward' : 'backward');
       setTab(urlTab);
       setPanelKey(k => k + 1);
     }
@@ -87,6 +87,7 @@ export default function AuthPage() {
 
   const switchTab = (next) => {
     if (next === tab) return;
+    setDirection(next === 'register' ? 'forward' : 'backward');
     setTab(next);
     setPanelKey(k => k + 1);
     navigate(next === 'register' ? '/register' : '/login', { replace: true });
@@ -140,6 +141,9 @@ export default function AuthPage() {
         {/* Full-viewport background — same as landing */}
         <div className="auth-bg" aria-hidden="true" />
 
+        {/* Ambient backlight glow directly behind glass card */}
+        <div className="auth-card-backdrop-glow" aria-hidden="true" />
+
         {/* Logo above card */}
         <header className="auth-header anim-fade-down delay-0">
           <Link to="/" className="auth-logo">LANOVA</Link>
@@ -154,9 +158,10 @@ export default function AuthPage() {
           role="region"
           aria-label="Authentication"
         >
-          {/* Tab bar */}
+          {/* Tab bar with sliding glowing indicator */}
           <div className="auth-tabs" role="tablist">
             <button
+              type="button"
               role="tab"
               id="tab-login"
               aria-selected={tab === 'login'}
@@ -167,6 +172,7 @@ export default function AuthPage() {
               Login
             </button>
             <button
+              type="button"
               role="tab"
               id="tab-register"
               aria-selected={tab === 'register'}
@@ -176,9 +182,10 @@ export default function AuthPage() {
             >
               Register
             </button>
+            <div className={`auth-tab-slider ${tab}`} aria-hidden="true" />
           </div>
 
-          {/* Animated panels — key forces remount & re-animation */}
+          {/* Animated panels with directional blur cross-fade */}
           <div className="auth-panels">
 
             {/* LOGIN */}
@@ -188,7 +195,7 @@ export default function AuthPage() {
                 id="panel-login"
                 role="tabpanel"
                 aria-labelledby="tab-login"
-                className="auth-panel active"
+                className={`auth-panel active anim-${direction}`}
               >
                 <form
                   className="auth-form-body"
@@ -246,7 +253,7 @@ export default function AuthPage() {
                 id="panel-register"
                 role="tabpanel"
                 aria-labelledby="tab-register"
-                className="auth-panel active"
+                className={`auth-panel active anim-${direction}`}
               >
                 <form
                   className="auth-form-body"

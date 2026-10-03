@@ -6,6 +6,10 @@
 @import './tokens.css';
 @import './animations.css';
 
+:root {
+  color-scheme: dark;
+}
+
 /* Reset & Base */
 *, *::before, *::after {
   box-sizing: border-box;
@@ -16,8 +20,32 @@
 html {
   font-size: 16px;
   scroll-behavior: smooth;
+  color-scheme: dark;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Universal Autofill Fix to prevent browser white background */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+input:-webkit-autofill:active,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-text-fill-color: #ffffff !important;
+  caret-color: #ffffff !important;
+  -webkit-box-shadow: 0 0 0 1000px #0b140c inset !important;
+  box-shadow: 0 0 0 1000px #0b140c inset !important;
+  transition: background-color 500000s ease-in-out 0s !important;
+  color: #ffffff !important;
+}
+
+input:autofill,
+textarea:autofill,
+select:autofill {
+  background-color: #0b140c !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 0 1000px #0b140c inset !important;
 }
 
 body {

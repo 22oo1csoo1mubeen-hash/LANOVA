@@ -1,9 +1,10 @@
-﻿// LANOVA — Mock network information
+// LANOVA — Mock network information
 // Replace with real backend data during integration.
 
 export const mockNetworkInfo = {
   lanIp:       '192.168.1.10',
   serverPort:  5000,
+  subnet:      '255.255.255.0',
   wsStatus:    'Connected',   // 'Connected' | 'Disconnected' | 'Connecting'
   activeUsers: 5,
   protocol:    'TCP (WebSocket over HTTP)',

@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import AppLayout from '../components/AppLayout';
 import ChatUserList from '../components/ChatUserList';
 import ChatArea from '../components/ChatArea';
 import { mockUsers } from '../data/mockUsers';
@@ -9,9 +8,8 @@ import '../styles/chat.css';
 /**
  * ChatPage — primary messaging interface for LANOVA.
  * Features:
- * 1. Left navigation sidebar (Chats, Network Info).
- * 2. Users list with instant search.
- * 3. Expanded real-time chat view with message bubbles and composer.
+ * 1. Users list with instant search.
+ * 2. Real-time chat view with message bubbles and composer.
  */
 export default function ChatPage() {
   const [users] = useState(mockUsers);
@@ -53,22 +51,20 @@ export default function ChatPage() {
   const currentMessages = conversations[selectedUser?.id] || [];
 
   return (
-    <AppLayout pageType="chat">
-      <div className="chat-layout-grid">
-        {/* Users list panel */}
-        <ChatUserList
-          users={users}
-          selectedUser={selectedUser}
-          onSelectUser={handleSelectUser}
-        />
+    <div className="chat-layout-grid">
+      {/* Users list panel */}
+      <ChatUserList
+        users={users}
+        selectedUser={selectedUser}
+        onSelectUser={handleSelectUser}
+      />
 
-        {/* Main Chat conversation area */}
-        <ChatArea
-          selectedUser={selectedUser}
-          messages={currentMessages}
-          onSendMessage={handleSendMessage}
-        />
-      </div>
-    </AppLayout>
+      {/* Main Chat conversation area */}
+      <ChatArea
+        selectedUser={selectedUser}
+        messages={currentMessages}
+        onSendMessage={handleSendMessage}
+      />
+    </div>
   );
 }

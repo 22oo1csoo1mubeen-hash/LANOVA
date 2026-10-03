@@ -3,6 +3,7 @@ import LandingPage from './pages/LandingPage';
 import AuthPage    from './pages/AuthPage';
 import ChatPage    from './pages/ChatPage';
 import NetworkPage from './pages/NetworkPage';
+import AppLayout   from './components/AppLayout';
 
 /**
  * App — client-side routing.
@@ -11,6 +12,7 @@ import NetworkPage from './pages/NetworkPage';
  *   /          -> LandingPage
  *   /login     -> AuthPage  (tab: login)
  *   /register  -> AuthPage  (tab: register)
+ *   (Persistent Layout with animated transitions)
  *   /chat      -> ChatPage
  *   /network   -> NetworkPage
  */
@@ -21,8 +23,11 @@ export default function App() {
         <Route path="/"         element={<LandingPage />} />
         <Route path="/login"    element={<AuthPage />} />
         <Route path="/register" element={<AuthPage />} />
-        <Route path="/chat"     element={<ChatPage />} />
-        <Route path="/network"  element={<NetworkPage />} />
+        {/* Persistent layout keeps header, container card, and nav slider mounted */}
+        <Route element={<AppLayout />}>
+          <Route path="/chat"     element={<ChatPage />} />
+          <Route path="/network"  element={<NetworkPage />} />
+        </Route>
         <Route path="*"         element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
