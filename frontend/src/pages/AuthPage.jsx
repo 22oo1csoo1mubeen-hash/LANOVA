@@ -1,0 +1,330 @@
+﻿import { useState, useEffect, useRef } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { ArrowRight, Eye, EyeOff, Lock, Mail, User } from 'lucide-react';
+import '../styles/auth.css';
+
+/* ------------------------------------------------------------------ */
+/* Reusable input with password toggle                                  */
+/* ------------------------------------------------------------------ */
+function AuthInput({ id, type = 'text', placeholder, icon, value, onChange, error, autoFocus }) {
+  const [show, setShow] = useState(false);
+  const isPassword      = type === 'password';
+  const resolvedType    = isPassword ? (show ? 'text' : 'password') : type;
+
+  const ICONS = {
+    user:     <User     size={16} strokeWidth={1.7} />,
+    password: <Lock     size={16} strokeWidth={1.7} />,
+    email:    <Mail     size={16} strokeWidth={1.7} />,
+  };
+
+  return (
+    <div>
+      <div className="auth-input-wrapper">
+        {icon && (
+          <span className="auth-input-icon" aria-hidden="true">
+            {ICONS[icon]}
+          </span>
+        )}
+        <input
+          id={id}
+          type={resolvedType}
+          placeholder={placeholder}
+          value={value}
+          onChange={onChange}
+          autoFocus={autoFocus}
+          className={`auth-input${isPassword ? ' has-toggle' : ''}`}
+          aria-invalid={!!error}
+          aria-describedby={error ? `${id}-err` : undefined}
+          autoComplete={
+            isPassword
+              ? (id.includes('confirm') ? 'new-password' : 'current-password')
+              : type === 'email'
+                ? 'email'
+                : 'username'
+          }
+        />
+        {isPassword && (
+          <button
+            type="button"
+            className="auth-input-toggle"
+            onClick={() => setShow(v => !v)}
+            aria-label={show ? 'Hide password' : 'Show password'}
+          >
+            {show ? <Eye size={15} strokeWidth={1.7} /> : <EyeOff size={15} strokeWidth={1.7} />}
+          </button>
+        )}
+      </div>
+      {error && (
+        <p id={`${id}-err`} className="auth-input-error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* AuthPage — single component, tabs switch via state (no page reload) */
+/* ------------------------------------------------------------------ */
+export default function AuthPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  // Derive current tab from URL
+  const urlTab = location.pathname === '/register' ? 'register' : 'login';
+  const [tab, setTab] = useState(urlTab);
+  // panelKey changes on every tab switch so React remounts the panel
+  // and the CSS animation replays from scratch
+  const [panelKey, setPanelKey] = useState(0);
+
+  // Keep tab in sync if user navigates with browser back/forward
+  useEffect(() => {
+    if (urlTab !== tab) {
+      setTab(urlTab);
+      setPanelKey(k => k + 1);
+    }
+  }, [urlTab]);
+
+  const switchTab = (next) => {
+    if (next === tab) return;
+    setTab(next);
+    setPanelKey(k => k + 1);
+    navigate(next === 'register' ? '/register' : '/login', { replace: true });
+  };
+
+  /* ---- Login form state ---- */
+  const [login,    setLogin]    = useState({ username: '', password: '' });
+  const [loginErr, setLoginErr] = useState({});
+
+  /* ---- Register form state ---- */
+  const [reg,    setReg]    = useState({ username: '', email: '', password: '', confirm: '' });
+  const [regErr, setRegErr] = useState({});
+
+  /* ---- Toast ---- */
+  const [toast,  setToast]  = useState(null);
+  const timer = useRef(null);
+
+  const showToast = (msg, type = 'success') => {
+    clearTimeout(timer.current);
+    setToast({ msg, type });
+    timer.current = setTimeout(() => setToast(null), 3500);
+  };
+
+  /* ---- Handlers ---- */
+  const handleLoginChange = (field) => (e) => {
+    setLogin(p => ({ ...p, [field]: e.target.value }));
+    setLoginErr(p => ({ ...p, [field]: '' }));
+  };
+
+  const handleRegChange = (field) => (e) => {
+    setReg(p => ({ ...p, [field]: e.target.value }));
+    setRegErr(p => ({ ...p, [field]: '' }));
+  };
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    const errs = {};
+    if (!login.username.trim()) errs.username = 'Username is required.';
+    if (!login.password)        errs.password = 'Password is required.';
+    if (Object.keys(errs).length) { setLoginErr(errs); return; }
+    // TODO: POST /api/auth/login
+    showToast('Backend not connected yet — frontend demo.', 'error');
+  };
+
+  const handleRegister = (e) => {
+    e.preventDefault();
+    const errs = {};
+    if (!reg.username.trim())        errs.username = 'Username is required.';
+    else if (reg.username.length < 3) errs.username = 'At least 3 characters.';
+    if (!reg.password)               errs.password = 'Password is required.';
+    else if (reg.password.length < 6) errs.password = 'At least 6 characters.';
+    if (!reg.confirm)                errs.confirm  = 'Please confirm your password.';
+    else if (reg.confirm !== reg.password) errs.confirm = 'Passwords do not match.';
+    if (Object.keys(errs).length) { setRegErr(errs); return; }
+    // TODO: POST /api/auth/register
+    showToast('Backend not connected yet — frontend demo.', 'error');
+  };
+
+  /* ---------------------------------------------------------------- */
+  return (
+    <>
+      <main className="auth-page">
+        {/* Full-viewport background — same as landing */}
+        <div className="auth-bg" aria-hidden="true" />
+
+        {/* Logo above card */}
+        <header className="auth-header anim-fade-down delay-0">
+          <Link to="/" className="auth-logo">LANOVA</Link>
+          <p className="auth-tagline">Private. Local. Instant.</p>
+        </header>
+
+        {/* ======================================================= */}
+        {/* Glass card                                               */}
+        {/* ======================================================= */}
+        <div
+          className="auth-card anim-scale-in delay-1"
+          role="region"
+          aria-label="Authentication"
+        >
+          {/* Tab bar */}
+          <div className="auth-tabs" role="tablist">
+            <button
+              role="tab"
+              id="tab-login"
+              aria-selected={tab === 'login'}
+              aria-controls="panel-login"
+              className={`auth-tab${tab === 'login' ? ' active' : ''}`}
+              onClick={() => switchTab('login')}
+            >
+              Login
+            </button>
+            <button
+              role="tab"
+              id="tab-register"
+              aria-selected={tab === 'register'}
+              aria-controls="panel-register"
+              className={`auth-tab${tab === 'register' ? ' active' : ''}`}
+              onClick={() => switchTab('register')}
+            >
+              Register
+            </button>
+          </div>
+
+          {/* Animated panels — key forces remount & re-animation */}
+          <div className="auth-panels">
+
+            {/* LOGIN */}
+            {tab === 'login' && (
+              <div
+                key={`login-${panelKey}`}
+                id="panel-login"
+                role="tabpanel"
+                aria-labelledby="tab-login"
+                className="auth-panel active"
+              >
+                <form
+                  className="auth-form-body"
+                  onSubmit={handleLogin}
+                  noValidate
+                  aria-label="Login form"
+                >
+                  <AuthInput
+                    id="l-user" type="text" placeholder="Username" icon="user"
+                    value={login.username} error={loginErr.username} autoFocus
+                    onChange={handleLoginChange('username')}
+                  />
+                  <AuthInput
+                    id="l-pass" type="password" placeholder="Password" icon="password"
+                    value={login.password} error={loginErr.password}
+                    onChange={handleLoginChange('password')}
+                  />
+                  <div className="auth-forgot">
+                    <button
+                      type="button"
+                      onClick={() => showToast('Password reset requires backend — coming soon.', 'error')}
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
+
+                  <button type="submit" className="auth-submit-btn" id="login-submit">
+                    Login <ArrowRight size={16} strokeWidth={2.2} aria-hidden="true" />
+                  </button>
+
+                  <div className="auth-divider" aria-hidden="true">
+                    <span className="auth-divider-line" />
+                    <span className="auth-divider-text">or</span>
+                    <span className="auth-divider-line" />
+                  </div>
+
+                  <p className="auth-switch">
+                    Don&apos;t have an account?
+                    <button
+                      type="button"
+                      className="auth-switch-link"
+                      onClick={() => switchTab('register')}
+                    >
+                      Register
+                    </button>
+                  </p>
+                </form>
+              </div>
+            )}
+
+            {/* REGISTER */}
+            {tab === 'register' && (
+              <div
+                key={`register-${panelKey}`}
+                id="panel-register"
+                role="tabpanel"
+                aria-labelledby="tab-register"
+                className="auth-panel active"
+              >
+                <form
+                  className="auth-form-body"
+                  onSubmit={handleRegister}
+                  noValidate
+                  aria-label="Registration form"
+                >
+                  <AuthInput
+                    id="r-user" type="text" placeholder="Username" icon="user"
+                    value={reg.username} error={regErr.username} autoFocus
+                    onChange={handleRegChange('username')}
+                  />
+                  <AuthInput
+                    id="r-email" type="email" placeholder="Email (optional)" icon="email"
+                    value={reg.email} error={regErr.email}
+                    onChange={handleRegChange('email')}
+                  />
+                  <AuthInput
+                    id="r-pass" type="password" placeholder="Password" icon="password"
+                    value={reg.password} error={regErr.password}
+                    onChange={handleRegChange('password')}
+                  />
+                  <AuthInput
+                    id="r-confirm" type="password" placeholder="Confirm Password" icon="password"
+                    value={reg.confirm} error={regErr.confirm}
+                    onChange={handleRegChange('confirm')}
+                  />
+
+                  <button type="submit" className="auth-submit-btn" id="register-submit">
+                    Register <ArrowRight size={16} strokeWidth={2.2} aria-hidden="true" />
+                  </button>
+
+                  <div className="auth-divider" aria-hidden="true">
+                    <span className="auth-divider-line" />
+                    <span className="auth-divider-text">or</span>
+                    <span className="auth-divider-line" />
+                  </div>
+
+                  <p className="auth-switch">
+                    Already have an account?
+                    <button
+                      type="button"
+                      className="auth-switch-link"
+                      onClick={() => switchTab('login')}
+                    >
+                      Login
+                    </button>
+                  </p>
+                </form>
+              </div>
+            )}
+
+          </div>{/* /auth-panels */}
+        </div>{/* /auth-card */}
+      </main>
+
+      {/* Toast */}
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`auth-toast ${toast.type}`}
+        >
+          {toast.msg}
+        </div>
+      )}
+    </>
+  );
+}

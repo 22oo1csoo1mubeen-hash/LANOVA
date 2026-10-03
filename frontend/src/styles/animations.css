@@ -1,0 +1,67 @@
+﻿/* ============================================================
+   LANOVA — Animations
+   ============================================================ */
+
+/* Page entrance */
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(28px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes fadeSlideDown {
+  from { opacity: 0; transform: translateY(-18px); }
+  to   { opacity: 1; transform: translateY(0);     }
+}
+
+@keyframes scaleIn {
+  from { opacity: 0; transform: scale(0.94); }
+  to   { opacity: 1; transform: scale(1);    }
+}
+
+@keyframes glowPulse {
+  0%, 100% { filter: brightness(1); }
+  50%       { filter: brightness(1.15); }
+}
+
+@keyframes subtleFloat {
+  0%, 100% { transform: translateY(0px);   }
+  50%       { transform: translateY(-6px);  }
+}
+
+/* Utility entrance classes */
+.anim-fade-up {
+  animation: fadeSlideUp var(--dur-slow) var(--ease-out) both;
+}
+.anim-fade-in {
+  animation: fadeIn var(--dur-slow) var(--ease-out) both;
+}
+.anim-scale-in {
+  animation: scaleIn var(--dur-slow) var(--ease-out) both;
+}
+.anim-fade-down {
+  animation: fadeSlideDown var(--dur-moderate) var(--ease-out) both;
+}
+
+/* Stagger delays */
+.delay-0  { animation-delay: 0ms;   }
+.delay-1  { animation-delay: 80ms;  }
+.delay-2  { animation-delay: 160ms; }
+.delay-3  { animation-delay: 240ms; }
+.delay-4  { animation-delay: 320ms; }
+.delay-5  { animation-delay: 420ms; }
+
+/* Respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

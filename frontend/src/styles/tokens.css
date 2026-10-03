@@ -1,0 +1,83 @@
+/* ============================================================
+   LANOVA — Design Tokens
+   ============================================================ */
+
+:root {
+  /* Colors */
+  --color-bg-primary:         #0a0e0a;
+  --color-bg-secondary:       #0d120d;
+  --color-bg-input:           #0e140e;
+  --color-accent:             #c2f135;
+  --color-accent-dim:         #a8d42c;
+  --color-accent-glow:        rgba(194, 241, 53, 0.35);
+  --color-accent-glow-soft:   rgba(194, 241, 53, 0.12);
+  --color-text-primary:       #ffffff;
+  --color-text-secondary:     rgba(255, 255, 255, 0.60);
+  --color-text-muted:         rgba(255, 255, 255, 0.38);
+  --color-text-accent:        #c2f135;
+  --color-border-card:        rgba(194, 241, 53, 0.14);
+  --color-border-input:       rgba(255, 255, 255, 0.10);
+  --color-border-input-focus: rgba(194, 241, 53, 0.55);
+  --color-divider:            rgba(255, 255, 255, 0.10);
+
+  /* Typography */
+  --font-heading: 'Outfit', 'Inter', system-ui, sans-serif;
+  --font-body:    'Inter', 'Outfit', system-ui, sans-serif;
+
+  --fw-regular:  400;
+  --fw-medium:   500;
+  --fw-semibold: 600;
+  --fw-bold:     700;
+  --fw-black:    900;
+
+  --ls-wide:  0.15em;
+  --ls-wider: 0.22em;
+
+  /* Spacing */
+  --sp-1: 0.25rem;
+  --sp-2: 0.5rem;
+  --sp-3: 0.75rem;
+  --sp-4: 1rem;
+  --sp-5: 1.25rem;
+  --sp-6: 1.5rem;
+  --sp-8: 2rem;
+  --sp-10: 2.5rem;
+  --sp-12: 3rem;
+  --sp-16: 4rem;
+  --sp-20: 5rem;
+
+  /* Border Radius */
+  --radius-sm:   6px;
+  --radius-md:   12px;
+  --radius-lg:   18px;
+  --radius-xl:   24px;
+  --radius-2xl:  32px;
+  --radius-full: 9999px;
+
+  /* Glassmorphism */
+  --glass-bg:      rgba(10, 18, 10, 0.68);
+  --glass-bg-card: rgba(8, 15, 8, 0.75);
+  --glass-bg-input:rgba(6, 12, 6, 0.82);
+  --glass-blur:    blur(20px);
+  --glass-blur-lg: blur(32px);
+  --glass-border:  rgba(194, 241, 53, 0.13);
+
+  /* Shadows */
+  --shadow-card:       0 8px 48px rgba(0,0,0,0.55), 0 0 0 1px var(--glass-border), 0 0 60px rgba(194,241,53,0.04);
+  --shadow-btn:        0 0 20px rgba(194,241,53,0.42), 0 4px 16px rgba(0,0,0,0.30);
+  --shadow-btn-hover:  0 0 36px rgba(194,241,53,0.68), 0 6px 24px rgba(0,0,0,0.35);
+  --shadow-input-focus:0 0 0 2px rgba(194,241,53,0.42), 0 0 16px rgba(194,241,53,0.18);
+  --shadow-logo:       0 0 22px rgba(194,241,53,0.45);
+
+  /* Animation */
+  --dur-fast:     160ms;
+  --dur-base:     220ms;
+  --dur-moderate: 350ms;
+  --dur-slow:     480ms;
+  --ease-out:     cubic-bezier(0.22,1,0.36,1);
+  --ease-in-out:  cubic-bezier(0.4,0,0.2,1);
+  --ease-spring:  cubic-bezier(0.34,1.56,0.64,1);
+
+  /* Z-index */
+  --z-navbar: 100;
+}
