@@ -1,16 +1,56 @@
-import { useState } from 'react';
-import { Monitor, Server, Wifi, Users, Share2, Activity, Check, Copy } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { Monitor, Server, Wifi, Users, Share2, Activity, Check, Copy, RefreshCw } from 'lucide-react';
 import NetworkCard from '../components/NetworkCard';
-import { mockNetworkInfo } from '../data/mockNetworkInfo';
+import { useSocket } from '../context/SocketContext';
+import api from '../utils/api';
 import '../styles/network.css';
 
 /**
- * NetworkPage — displays Computer Networking details, local IP,
- * port, WebSocket connection status, and active user metrics.
+ * NetworkPage — Displays real-time Computer Networks telemetry:
+ * Local IPv4 address, listening port, subnet mask, active WebSocket peers,
+ * client connection state, and instant LAN sharing link.
  */
 export default function NetworkPage() {
+  const { isConnected, onlineUserIds } = useSocket();
   const [copiedLink, setCopiedLink] = useState(false);
-  const shareUrl = `http://${mockNetworkInfo.lanIp}:${mockNetworkInfo.serverPort}`;
+  const [netData, setNetData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const fetchNetworkTelemetry = useCallback(async (isManual = false) => {
+    if (isManual) setRefreshing(true);
+    try {
+      const data = await api.get('/api/network/info');
+      setNetData(data);
+    } catch (err) {
+      console.warn('[NetworkPage] Telemetry fetch notice:', err.message);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchNetworkTelemetry();
+  }, [fetchNetworkTelemetry]);
+
+  // Derive active values from backend telemetry
+  const lanIp =
+    netData?.network?.lanIp ||
+    (typeof window !== 'undefined' ? window.location.hostname : '127.0.0.1');
+  const serverPort = netData?.server?.port || 5000;
+  const subnet = netData?.network?.subnet || '255.255.255.0';
+  const clientIp = netData?.client?.ip || '127.0.0.1';
+  const hostname = netData?.server?.hostname || 'LAN Host';
+  const interfaceName = netData?.network?.interfaceName || 'Local Area Network';
+  const dbConnected = netData?.database?.status === 'connected';
+
+  // Active peers count (prefers live WebSocket presence)
+  const activePeers =
+    onlineUserIds.size > 0 ? onlineUserIds.size : netData?.network?.activeUsers || 1;
+
+  // The URL other devices on the LAN use to load LANOVA in their browser
+  const shareUrl = `http://${lanIp}:5173`;
 
   const handleCopyLink = async () => {
     try {
@@ -24,12 +64,36 @@ export default function NetworkPage() {
   };
 
   const connectionRows = [
-    { label: 'Server Status', value: 'Online', isOnline: true },
-    { label: 'Database Sync', value: 'Connected', isOnline: true },
-    { label: 'WebSocket Daemon', value: 'Active (TCP)', isOnline: true },
-    { label: 'Client Connection', value: 'Connected', isOnline: true },
-    { label: 'Network Protocol', value: 'TCP / WebSocket', isOnline: false },
-    { label: 'Transport Mode', value: 'LAN Broadcast', isOnline: false },
+    {
+      label: 'Server Host',
+      value: `${hostname} (Port ${serverPort})`,
+      isOnline: true,
+    },
+    {
+      label: 'Database Sync',
+      value: dbConnected ? 'Connected (MongoDB)' : 'Connecting...',
+      isOnline: dbConnected,
+    },
+    {
+      label: 'WebSocket Daemon',
+      value: isConnected ? `Active (TCP port ${serverPort})` : 'Connecting...',
+      isOnline: isConnected,
+    },
+    {
+      label: 'Observed Client IP',
+      value: clientIp,
+      isOnline: true,
+    },
+    {
+      label: 'Network Protocol',
+      value: 'TCP / WebSocket over HTTP',
+      isOnline: false,
+    },
+    {
+      label: 'Active Interface',
+      value: `${interfaceName} (LAN IPv4)`,
+      isOnline: false,
+    },
   ];
 
   return (
@@ -44,18 +108,30 @@ export default function NetworkPage() {
               Network <span className="title-accent">Information</span>
             </h1>
             <p className="network-subtitle">
-              Your local server details, protocols, and real-time connection telemetry.
+              Host server details, transport protocols, and real-time LAN telemetry.
             </p>
           </div>
 
           <div className="network-header-right">
             <div className="network-status-badge">
-              <span className="status-bullet online glow" />
-              <span>Connected to LANOVA</span>
+              <span className={`status-bullet ${isConnected ? 'online glow' : 'offline'}`} />
+              <span>{isConnected ? 'Connected to LANOVA' : 'Connecting to Server...'}</span>
             </div>
-            <span className="network-status-sub">
-              Real-time communication over LAN
-            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span className="network-status-sub">
+                Real-time communication over LAN
+              </span>
+              <button
+                type="button"
+                className="net-card-action-btn"
+                style={{ width: '28px', height: '28px', padding: '0', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}
+                onClick={() => fetchNetworkTelemetry(true)}
+                title="Refresh network telemetry"
+                aria-label="Refresh network telemetry"
+              >
+                <RefreshCw size={13} className={refreshing ? 'anim-spin' : ''} />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -65,36 +141,36 @@ export default function NetworkPage() {
           <NetworkCard
             icon={Monitor}
             label="LAN IP Address"
-            value={mockNetworkInfo.lanIp}
-            subtext="Use this address on other devices in the same network."
+            value={lanIp}
+            subtext="Use this address on other devices in the same local network."
             isCopyable={true}
-            copyValue={mockNetworkInfo.lanIp}
+            copyValue={lanIp}
           />
 
           {/* 2. Server Port */}
           <NetworkCard
             icon={Server}
             label="Server Port"
-            value={mockNetworkInfo.serverPort}
-            subtext="The server is listening for sockets on this port."
+            value={serverPort}
+            subtext="Node.js HTTP & WebSocket server is listening on this port."
             isCopyable={true}
-            copyValue={String(mockNetworkInfo.serverPort)}
+            copyValue={String(serverPort)}
           />
 
           {/* 3. Subnet */}
           <NetworkCard
             icon={Wifi}
             label="Subnet Mask"
-            value={mockNetworkInfo.subnet || '255.255.255.0'}
-            subtext="Local IPv4 subnet mask for broadcast domain."
+            value={subnet}
+            subtext="IPv4 subnet mask defining the local broadcast domain."
           />
 
           {/* 4. Active Users */}
           <NetworkCard
             icon={Users}
             label="Active LAN Peers"
-            value={`${mockNetworkInfo.activeUsers} Online`}
-            subtext="Discovered users currently active on your LAN."
+            value={`${activePeers} Online`}
+            subtext="Discovered peers currently authenticated on your LAN."
           />
         </div>
 

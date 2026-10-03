@@ -401,3 +401,238 @@
     grid-template-columns: 1fr;
   }
 }
+
+@media (max-width: 768px) {
+  .network-layout-grid {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .network-dashboard-main {
+    gap: 12px;
+    padding: 10px 14px;
+    padding-bottom: max(60px, env(safe-area-inset-bottom, 60px));
+    -webkit-overflow-scrolling: touch;
+    width: 100%;
+    box-sizing: border-box;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+
+  .network-page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding-bottom: 2px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .network-eyebrow {
+    font-size: 0.68rem;
+  }
+
+  .network-main-title {
+    font-size: 1.35rem;
+    line-height: 1.2;
+  }
+
+  .network-subtitle {
+    font-size: 0.78rem;
+    line-height: 1.35;
+  }
+
+  .network-header-right {
+    width: 100%;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .network-status-badge {
+    padding: 4px 10px;
+    font-size: 0.74rem;
+  }
+
+  .network-status-sub {
+    font-size: 0.68rem;
+  }
+
+  /* Metric cards */
+  .network-cards-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .net-metric-card {
+    padding: 12px 14px;
+    border-radius: 14px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .net-card-left-wrap {
+    gap: 12px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .net-card-content {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .net-card-icon-circle {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+  }
+
+  .net-card-icon-circle svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .net-card-label {
+    font-size: 0.72rem;
+  }
+
+  .net-card-val {
+    font-size: 1.15rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .net-card-subtext {
+    font-size: 0.70rem;
+    line-height: 1.3;
+  }
+
+  .net-card-action-btn {
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+  }
+
+  /* Details cards */
+  .network-details-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 20px;
+  }
+
+  .net-detail-card {
+    padding: 14px;
+    border-radius: 14px;
+    gap: 10px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .net-detail-header {
+    gap: 10px;
+  }
+
+  .net-detail-icon-circle {
+    width: 34px;
+    height: 34px;
+    min-width: 34px;
+  }
+
+  .net-detail-icon-circle svg {
+    width: 16px;
+    height: 16px;
+  }
+
+  .net-detail-badge {
+    font-size: 0.64rem;
+  }
+
+  .net-detail-title {
+    font-size: 0.95rem;
+  }
+
+  .net-detail-desc {
+    font-size: 0.78rem;
+    line-height: 1.4;
+  }
+
+  .net-share-url-box {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 10px 12px;
+    gap: 8px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  .net-share-code {
+    font-size: 0.80rem;
+    word-break: break-all;
+    text-align: center;
+  }
+
+  .net-copy-btn {
+    width: 100%;
+    height: 36px;
+    justify-content: center;
+    padding: 6px 12px;
+    font-size: 0.78rem;
+  }
+
+  .net-detail-row {
+    padding: 6px 0;
+  }
+
+  .net-row-label {
+    font-size: 0.74rem;
+  }
+
+  .net-row-val {
+    font-size: 0.76rem;
+    max-width: 58%;
+    text-align: right;
+    word-break: break-word;
+  }
+}
+
+@media (max-width: 480px) {
+  .network-main-title {
+    font-size: 1.25rem;
+  }
+
+  .network-header-right {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .net-share-url-box {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .net-copy-btn {
+    width: 100%;
+    justify-content: center;
+    padding: 8px 14px;
+  }
+}
+

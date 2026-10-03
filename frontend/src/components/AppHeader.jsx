@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { ChevronDown, MessageSquare, Radio, LogOut } from 'lucide-react';
 import Avatar from './Avatar';
+import { useAuth } from '../context/AuthContext';
 
 /**
  * AppHeader — top bar for Chat and Network pages.
@@ -12,6 +13,7 @@ export default function AppHeader() {
   const navigate = useNavigate();
   const location = useLocation();
   const isNetwork = location.pathname.startsWith('/network');
+  const { user, logout } = useAuth();
 
   const [menuOpen, setMenuOpen] = useState(false);
   const dropdownRef = useRef(null);
@@ -40,7 +42,7 @@ export default function AppHeader() {
   }, [isNetwork]);
 
   const currentUser = {
-    username: 'Mubeen',
+    username: user?.username || 'User',
     avatar: true,
     status: 'online',
   };
@@ -101,7 +103,7 @@ export default function AppHeader() {
           className={`lanova-header-nav-link${isNetwork ? ' active' : ''}`}
         >
           <Radio size={16} strokeWidth={2} />
-          <span>Network Info</span>
+          <span>Network<span className="net-nav-extra"> Info</span></span>
         </Link>
       </nav>
 
@@ -139,6 +141,7 @@ export default function AppHeader() {
               role="menuitem"
               onClick={() => {
                 setMenuOpen(false);
+                logout();
                 navigate('/login');
               }}
             >

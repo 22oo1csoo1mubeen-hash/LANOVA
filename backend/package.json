@@ -1,0 +1,37 @@
+{
+  "name": "lanova-backend",
+  "version": "1.0.0",
+  "description": "LANOVA LAN-based Real-Time Chat Backend — Milestone 1",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node tests/auth.test.js",
+    "test:chat": "node tests/chat.test.js",
+    "test:network": "node tests/network.test.js",
+    "test:all": "node tests/auth.test.js && node tests/chat.test.js && node tests/network.test.js"
+  },
+  "keywords": [
+    "lanova",
+    "chat",
+    "lan",
+    "express",
+    "mongodb",
+    "jwt",
+    "authentication"
+  ],
+  "author": "LANOVA Team",
+  "license": "ISC",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-validator": "^7.2.1",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.12.0",
+    "ws": "^8.22.0"
+  }
+}

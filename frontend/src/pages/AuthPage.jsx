@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, Eye, EyeOff, Lock, Mail, User } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 import '../styles/auth.css';
 
 /* ------------------------------------------------------------------ */
 /* Reusable input with password toggle                                  */
 /* ------------------------------------------------------------------ */
-function AuthInput({ id, type = 'text', placeholder, icon, value, onChange, error, autoFocus }) {
+function AuthInput({ id, type = 'text', placeholder, icon, value, onChange, error, autoFocus, disabled }) {
   const [show, setShow] = useState(false);
   const isPassword      = type === 'password';
   const resolvedType    = isPassword ? (show ? 'text' : 'password') : type;
@@ -32,6 +33,7 @@ function AuthInput({ id, type = 'text', placeholder, icon, value, onChange, erro
           value={value}
           onChange={onChange}
           autoFocus={autoFocus}
+          disabled={disabled}
           className={`auth-input${isPassword ? ' has-toggle' : ''}`}
           aria-invalid={!!error}
           aria-describedby={error ? `${id}-err` : undefined}
@@ -69,12 +71,21 @@ function AuthInput({ id, type = 'text', placeholder, icon, value, onChange, erro
 export default function AuthPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { login: authLogin, register: authRegister, user } = useAuth();
+
+  // If already authenticated, redirect to chat
+  useEffect(() => {
+    if (user) {
+      navigate('/chat', { replace: true });
+    }
+  }, [user, navigate]);
 
   // Derive current tab from URL
   const urlTab = location.pathname === '/register' ? 'register' : 'login';
   const [tab, setTab] = useState(urlTab);
   const [direction, setDirection] = useState('forward');
   const [panelKey, setPanelKey] = useState(0);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Keep tab in sync if user navigates with browser back/forward
   useEffect(() => {
@@ -122,16 +133,73 @@ export default function AuthPage() {
     setRegErr(p => ({ ...p, [field]: '' }));
   };
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e?.preventDefault();
-    // Direct navigation to chat without credentials
-    navigate('/chat');
+    const errors = {};
+    if (!login.username.trim()) errors.username = 'Username is required';
+    if (!login.password) errors.password = 'Password is required';
+
+    if (Object.keys(errors).length > 0) {
+      setLoginErr(errors);
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await authLogin(login.username.trim(), login.password);
+      showToast('Logged in successfully!', 'success');
+      navigate('/chat');
+    } catch (err) {
+      showToast(err.message, 'error');
+      setLoginErr({ general: err.message });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleRegister = (e) => {
+  const handleRegister = async (e) => {
     e?.preventDefault();
-    // Direct navigation to chat without credentials
-    navigate('/chat');
+    const errors = {};
+    const cleanUser = reg.username.trim();
+
+    if (!cleanUser) {
+      errors.username = 'Username is required';
+    } else if (cleanUser.length < 3 || cleanUser.length > 30) {
+      errors.username = 'Username must be between 3 and 30 characters';
+    } else if (!/^[a-zA-Z0-9_]+$/.test(cleanUser)) {
+      errors.username = 'Letters, numbers, and underscores only';
+    }
+
+    if (!reg.password) {
+      errors.password = 'Password is required';
+    } else if (reg.password.length < 6) {
+      errors.password = 'Password must be at least 6 characters';
+    }
+
+    if (reg.password !== reg.confirm) {
+      errors.confirm = 'Passwords do not match';
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setRegErr(errors);
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await authRegister(cleanUser, reg.password);
+      showToast('Registration successful! Please log in.', 'success');
+      // Pre-fill username on login form and switch to login tab
+      setLogin(p => ({ ...p, username: cleanUser, password: '' }));
+      switchTab('login');
+    } catch (err) {
+      showToast(err.message, 'error');
+      if (err.message.toLowerCase().includes('username')) {
+        setRegErr({ username: err.message });
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   /* ---------------------------------------------------------------- */
@@ -206,24 +274,37 @@ export default function AuthPage() {
                   <AuthInput
                     id="l-user" type="text" placeholder="Username" icon="user"
                     value={login.username} error={loginErr.username} autoFocus
+                    disabled={isSubmitting}
                     onChange={handleLoginChange('username')}
                   />
                   <AuthInput
                     id="l-pass" type="password" placeholder="Password" icon="password"
                     value={login.password} error={loginErr.password}
+                    disabled={isSubmitting}
                     onChange={handleLoginChange('password')}
                   />
                   <div className="auth-forgot">
                     <button
                       type="button"
-                      onClick={() => showToast('Password reset requires backend — coming soon.', 'error')}
+                      onClick={() => showToast('LAN deployment uses local credentials. Contact network admin for reset.', 'info')}
                     >
                       Forgot password?
                     </button>
                   </div>
 
-                  <button type="submit" className="auth-submit-btn" id="login-submit">
-                    Login <ArrowRight size={16} strokeWidth={2.2} aria-hidden="true" />
+                  <button
+                    type="submit"
+                    className="auth-submit-btn"
+                    id="login-submit"
+                    disabled={isSubmitting}
+                  >
+                    {isSubmitting ? (
+                      'Authenticating...'
+                    ) : (
+                      <>
+                        Login <ArrowRight size={16} strokeWidth={2.2} aria-hidden="true" />
+                      </>
+                    )}
                   </button>
 
                   <div className="auth-divider" aria-hidden="true">
@@ -264,26 +345,41 @@ export default function AuthPage() {
                   <AuthInput
                     id="r-user" type="text" placeholder="Username" icon="user"
                     value={reg.username} error={regErr.username} autoFocus
+                    disabled={isSubmitting}
                     onChange={handleRegChange('username')}
                   />
                   <AuthInput
                     id="r-email" type="email" placeholder="Email (optional)" icon="email"
                     value={reg.email} error={regErr.email}
+                    disabled={isSubmitting}
                     onChange={handleRegChange('email')}
                   />
                   <AuthInput
                     id="r-pass" type="password" placeholder="Password" icon="password"
                     value={reg.password} error={regErr.password}
+                    disabled={isSubmitting}
                     onChange={handleRegChange('password')}
                   />
                   <AuthInput
                     id="r-confirm" type="password" placeholder="Confirm Password" icon="password"
                     value={reg.confirm} error={regErr.confirm}
+                    disabled={isSubmitting}
                     onChange={handleRegChange('confirm')}
                   />
 
-                  <button type="submit" className="auth-submit-btn" id="register-submit">
-                    Register <ArrowRight size={16} strokeWidth={2.2} aria-hidden="true" />
+                  <button
+                    type="submit"
+                    className="auth-submit-btn"
+                    id="register-submit"
+                    disabled={isSubmitting}
+                  >
+                    {isSubmitting ? (
+                      'Creating Account...'
+                    ) : (
+                      <>
+                        Register <ArrowRight size={16} strokeWidth={2.2} aria-hidden="true" />
+                      </>
+                    )}
                   </button>
 
                   <div className="auth-divider" aria-hidden="true">

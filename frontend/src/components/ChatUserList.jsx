@@ -12,6 +12,7 @@ export default function ChatUserList({
   onSelectUser,
 }) {
   const [searchQuery, setSearchQuery] = useState('');
+  const [isReadOnly, setIsReadOnly] = useState(true);
 
   const filteredUsers = users.filter((u) =>
     u.username.toLowerCase().includes(searchQuery.toLowerCase())
@@ -23,7 +24,21 @@ export default function ChatUserList({
       <div className="chat-search-wrap">
         <Search size={16} className="chat-search-icon" />
         <input
-          type="text"
+          type="search"
+          name="user-search-query"
+          id="user-search-query"
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck="false"
+          readOnly={isReadOnly}
+          onFocus={() => setIsReadOnly(false)}
+          onTouchStart={() => setIsReadOnly(false)}
+          onBlur={() => setIsReadOnly(true)}
+          data-form-type="other"
+          data-lpignore="true"
+          data-1p-ignore="true"
+          aria-autocomplete="none"
           className="chat-search-input"
           placeholder="Search users..."
           value={searchQuery}
