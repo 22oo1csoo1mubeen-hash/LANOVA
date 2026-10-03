@@ -87,16 +87,17 @@
   color: var(--color-accent);
   background: transparent;
   cursor: pointer;
-  transition: background var(--dur-base) var(--ease-out),
-              color var(--dur-base) var(--ease-out),
-              box-shadow var(--dur-base) var(--ease-out);
+  transition:
+    background 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    color 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.45s cubic-bezier(0.16, 1, 0.3, 1);
   text-transform: uppercase;
 }
 
 .nav-open-btn:hover {
   background: var(--color-accent);
   color: #0a0e0a;
-  box-shadow: var(--shadow-btn);
+  box-shadow: 0 4px 20px rgba(194, 241, 53, 0.28);
 }
 
 .nav-open-btn svg {
@@ -182,22 +183,23 @@
   color: #0a0e0a;
   border: none;
   cursor: pointer;
-  box-shadow: var(--shadow-btn);
-  transition: background var(--dur-base) var(--ease-out),
-              box-shadow var(--dur-base) var(--ease-out),
-              transform var(--dur-fast) var(--ease-spring);
+  box-shadow: 0 4px 18px rgba(194, 241, 53, 0.22), 0 0 10px rgba(194, 241, 53, 0.10);
+  transition:
+    background 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
   text-decoration: none;
 }
 
 .hero-cta:hover {
   background: #d4ff50;
-  box-shadow: var(--shadow-btn-hover);
+  box-shadow: 0 6px 28px rgba(194, 241, 53, 0.38), 0 0 16px rgba(194, 241, 53, 0.18);
   transform: translateY(-2px);
 }
 
 .hero-cta:active {
   transform: translateY(0px);
-  box-shadow: var(--shadow-btn);
+  box-shadow: 0 3px 12px rgba(194, 241, 53, 0.22);
 }
 
 .hero-cta svg {

@@ -1,4 +1,4 @@
-﻿import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ArrowRight, Eye, EyeOff, Lock, Mail, User } from 'lucide-react';
 import '../styles/auth.css';
@@ -122,27 +122,15 @@ export default function AuthPage() {
   };
 
   const handleLogin = (e) => {
-    e.preventDefault();
-    const errs = {};
-    if (!login.username.trim()) errs.username = 'Username is required.';
-    if (!login.password)        errs.password = 'Password is required.';
-    if (Object.keys(errs).length) { setLoginErr(errs); return; }
-    // TODO: POST /api/auth/login
-    showToast('Backend not connected yet — frontend demo.', 'error');
+    e?.preventDefault();
+    // Direct navigation to chat without credentials
+    navigate('/chat');
   };
 
   const handleRegister = (e) => {
-    e.preventDefault();
-    const errs = {};
-    if (!reg.username.trim())        errs.username = 'Username is required.';
-    else if (reg.username.length < 3) errs.username = 'At least 3 characters.';
-    if (!reg.password)               errs.password = 'Password is required.';
-    else if (reg.password.length < 6) errs.password = 'At least 6 characters.';
-    if (!reg.confirm)                errs.confirm  = 'Please confirm your password.';
-    else if (reg.confirm !== reg.password) errs.confirm = 'Passwords do not match.';
-    if (Object.keys(errs).length) { setRegErr(errs); return; }
-    // TODO: POST /api/auth/register
-    showToast('Backend not connected yet — frontend demo.', 'error');
+    e?.preventDefault();
+    // Direct navigation to chat without credentials
+    navigate('/chat');
   };
 
   /* ---------------------------------------------------------------- */
