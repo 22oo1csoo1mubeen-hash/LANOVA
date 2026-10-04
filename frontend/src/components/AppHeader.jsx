@@ -47,6 +47,16 @@ export default function AppHeader() {
     status: 'online',
   };
 
+  const handleLogout = (e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    setMenuOpen(false);
+    logout();
+    navigate('/login', { replace: true });
+  };
+
   // Close dropdown on outside click
   useEffect(() => {
     function handleClickOutside(event) {
@@ -55,11 +65,14 @@ export default function AppHeader() {
       }
     }
     if (menuOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
+      const timer = setTimeout(() => {
+        document.addEventListener('pointerdown', handleClickOutside);
+      }, 0);
+      return () => {
+        clearTimeout(timer);
+        document.removeEventListener('pointerdown', handleClickOutside);
+      };
     }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
   }, [menuOpen]);
 
   return (
@@ -134,16 +147,23 @@ export default function AppHeader() {
 
         {/* Dropdown Menu on Click */}
         {menuOpen && (
-          <div className="lanova-user-dropdown anim-scale-in" role="menu">
+          <div
+            className="lanova-user-dropdown anim-scale-in"
+            role="menu"
+            onPointerDown={(e) => e.stopPropagation()}
+            onTouchStart={(e) => e.stopPropagation()}
+          >
             <button
               type="button"
               className="lanova-dropdown-item logout"
               role="menuitem"
-              onClick={() => {
-                setMenuOpen(false);
-                logout();
-                navigate('/login');
+              onPointerDown={(e) => e.stopPropagation()}
+              onTouchEnd={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                handleLogout(e);
               }}
+              onClick={handleLogout}
             >
               <LogOut size={16} strokeWidth={2} />
               <span>Logout</span>

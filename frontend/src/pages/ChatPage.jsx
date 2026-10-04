@@ -278,6 +278,14 @@ export default function ChatPage() {
     [selectedUser, user?.id, sendMessage]
   );
 
+  const handleClearConversation = useCallback((targetUserId) => {
+    if (!targetUserId) return;
+    setConversations((prev) => ({
+      ...prev,
+      [targetUserId]: [],
+    }));
+  }, []);
+
   const currentMessages = conversations[selectedUser?.id] || [];
 
   return (
@@ -289,6 +297,7 @@ export default function ChatPage() {
         users={users}
         selectedUser={selectedUser}
         onSelectUser={handleSelectUser}
+        onClearConversation={handleClearConversation}
       />
 
       {/* Main Chat conversation area */}
@@ -297,6 +306,7 @@ export default function ChatPage() {
         messages={currentMessages}
         onSendMessage={handleSendMessage}
         onBack={handleBackToUsers}
+        onClearConversation={handleClearConversation}
       />
     </div>
   );

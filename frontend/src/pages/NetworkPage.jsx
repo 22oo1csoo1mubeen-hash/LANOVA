@@ -3,6 +3,7 @@ import { Monitor, Server, Wifi, Users, Share2, Activity, Check, Copy, RefreshCw 
 import NetworkCard from '../components/NetworkCard';
 import { useSocket } from '../context/SocketContext';
 import api from '../utils/api';
+import { copyToClipboard } from '../utils/clipboard';
 import '../styles/network.css';
 
 /**
@@ -53,11 +54,8 @@ export default function NetworkPage() {
   const shareUrl = `http://${lanIp}:5173`;
 
   const handleCopyLink = async () => {
-    try {
-      await navigator.clipboard.writeText(shareUrl);
-      setCopiedLink(true);
-      setTimeout(() => setCopiedLink(false), 2200);
-    } catch {
+    const success = await copyToClipboard(shareUrl);
+    if (success) {
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2200);
     }

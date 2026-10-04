@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Copy, Check, ArrowRight } from 'lucide-react';
+import { copyToClipboard } from '../utils/clipboard';
 
 /**
  * NetworkCard — reusable card for the 4 primary network metrics on NetworkPage.
@@ -18,13 +19,10 @@ export default function NetworkCard({
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
-    if (!copyValue && !value) return;
-    try {
-      await navigator.clipboard.writeText(copyValue || value);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Fallback
+    const textToCopy = copyValue || value;
+    if (!textToCopy) return;
+    const success = await copyToClipboard(textToCopy);
+    if (success) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }

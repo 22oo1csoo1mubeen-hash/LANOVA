@@ -1,4 +1,4 @@
-﻿import { useNavigate, Link } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { ArrowUpRight } from 'lucide-react';
 import Logo from '../components/Logo';
 import '../styles/landing.css';
@@ -7,31 +7,14 @@ import '../styles/landing.css';
  * LandingPage — hero-only landing matching the reference design.
  */
 export default function LandingPage() {
-  const navigate = useNavigate();
-
   return (
     <div className="landing-page">
       {/* Background */}
       <div className="landing-bg" aria-hidden="true" />
 
-      {/* Navbar */}
+      {/* Navbar - clean brand wordmark only */}
       <nav className="landing-nav anim-fade-down delay-0" aria-label="Primary navigation">
         <Logo to="/" />
-
-        <ul className="nav-links" role="list">
-          <li><a href="#features">Features</a></li>
-          <li><a href="#how-it-works">How It Works</a></li>
-          <li><a href="#network">Network</a></li>
-        </ul>
-
-        <button
-          className="nav-open-btn"
-          onClick={() => navigate('/login')}
-          aria-label="Open the LANOVA app"
-        >
-          OPEN APP
-          <ArrowUpRight aria-hidden="true" />
-        </button>
       </nav>
 
       {/* Hero */}
