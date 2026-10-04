@@ -46,6 +46,12 @@ export default function NetworkPage() {
   const interfaceName = netData?.network?.interfaceName || 'Local Area Network';
   const dbConnected = netData?.database?.status === 'connected';
 
+  // Format long cloud container hostnames (e.g. Render srv-db12dem0tbcc7396hh10...)
+  const displayHost =
+    hostname && hostname.length > 22
+      ? `${hostname.slice(0, 10)}…${hostname.slice(-8)}`
+      : hostname;
+
   // Active peers count (prefers live WebSocket presence)
   const activePeers =
     onlineUserIds.size > 0 ? onlineUserIds.size : netData?.network?.activeUsers || 1;
@@ -64,7 +70,8 @@ export default function NetworkPage() {
   const connectionRows = [
     {
       label: 'Server Host',
-      value: `${hostname} (Port ${serverPort})`,
+      value: `${displayHost} (Port ${serverPort})`,
+      fullValue: `${hostname} (Port ${serverPort})`,
       isOnline: true,
     },
     {
@@ -227,7 +234,10 @@ export default function NetworkPage() {
                     {item.isOnline && <span className="status-bullet online glow-dot" />}
                     {item.label}
                   </span>
-                  <span className={`net-row-val${item.isOnline ? ' val-online' : ''}`}>
+                  <span
+                    className={`net-row-val${item.isOnline ? ' val-online' : ''}`}
+                    title={item.fullValue || item.value}
+                  >
                     {item.value}
                   </span>
                 </div>

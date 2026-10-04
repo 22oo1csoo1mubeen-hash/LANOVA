@@ -360,6 +360,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   padding: 8px 0;
   border-bottom: 1px solid rgba(255, 255, 255, 0.04);
 }
@@ -369,13 +370,15 @@
 }
 
 .net-row-label {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 9px;
   font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
   font-size: 0.82rem;
   font-weight: 500;
   color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .glow-dot {
@@ -387,6 +390,12 @@
   font-size: 0.83rem;
   font-weight: 600;
   color: #ffffff;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 65%;
+  flex-shrink: 1;
 }
 
 .net-row-val.val-online {
@@ -602,13 +611,17 @@
 
   .net-row-label {
     font-size: 0.74rem;
+    white-space: nowrap;
+    flex-shrink: 0;
   }
 
   .net-row-val {
     font-size: 0.76rem;
-    max-width: 58%;
+    max-width: 60%;
     text-align: right;
-    word-break: break-word;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 
