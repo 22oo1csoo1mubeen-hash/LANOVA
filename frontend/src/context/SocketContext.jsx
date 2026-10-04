@@ -109,8 +109,59 @@ export function SocketProvider({ children }) {
       setOnlineUserIds(new Set());
     }
 
+    // Immediately close socket when tab/window is closing or navigating away
+    const handlePageHide = () => {
+      isExplicitCloseRef.current = true;
+      if (socketRef.current) {
+        try {
+          socketRef.current.close(1000, 'Browser tab closed');
+          socketRef.current = null;
+        } catch {}
+      }
+    };
+
+    // Manage online/offline state when user minimizes browser, switches tabs, or locks mobile phone
+    let hideTimer = null;
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        // Tab hidden or phone locked / switched apps -> close connection after 1 second
+        hideTimer = setTimeout(() => {
+          if (socketRef.current) {
+            isExplicitCloseRef.current = true;
+            try {
+              socketRef.current.close(1000, 'Tab hidden');
+              socketRef.current = null;
+            } catch {}
+            setIsConnected(false);
+          }
+        }, 1000);
+      } else if (document.visibilityState === 'visible') {
+        // Tab returned to active foreground -> cancel hide timer and reconnect immediately
+        if (hideTimer) {
+          clearTimeout(hideTimer);
+          hideTimer = null;
+        }
+        if (token && user) {
+          isExplicitCloseRef.current = false;
+          if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+            connect();
+          }
+        }
+      }
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('beforeunload', handlePageHide);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
       isExplicitCloseRef.current = true;
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('beforeunload', handlePageHide);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (hideTimer) {
+        clearTimeout(hideTimer);
+      }
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }

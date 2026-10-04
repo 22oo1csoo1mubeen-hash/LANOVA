@@ -16,7 +16,7 @@ export function initSocketServer(server) {
 
   console.log('[LANOVA WebSocket] Server attached at path /ws');
 
-  // Heartbeat / ping-pong every 30 seconds to clean up dead TCP sockets
+  // Heartbeat / ping-pong every 10 seconds to rapidly clean up dead TCP sockets
   heartbeatInterval = setInterval(() => {
     wss.clients.forEach((ws) => {
       if (ws.isAlive === false) {
@@ -26,7 +26,7 @@ export function initSocketServer(server) {
       ws.isAlive = false;
       ws.ping();
     });
-  }, 30000);
+  }, 10000);
 
   wss.on('connection', async (ws, req) => {
     ws.isAlive = true;
