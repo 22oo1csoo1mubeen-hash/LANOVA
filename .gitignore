@@ -18,6 +18,10 @@ frontend/.env.*
 frontend/dist/
 frontend/dist-ssr/
 
+# Uploaded media
+uploads/
+backend/uploads/
+
 # Logs
 logs/
 *.log

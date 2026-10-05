@@ -172,7 +172,7 @@ export function SocketProvider({ children }) {
     };
   }, [token, user, connect]);
 
-  const sendMessage = useCallback((receiverId, content) => {
+  const sendMessage = useCallback((receiverId, content, extra = {}) => {
     if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
       throw new Error('WebSocket connection is not open. Unable to send message.');
     }
@@ -181,7 +181,10 @@ export function SocketProvider({ children }) {
       type: 'message:send',
       payload: {
         receiverId,
-        content,
+        content: typeof content === 'string' ? content : '',
+        messageType: extra?.messageType || (extra?.imageUrl ? 'image' : 'text'),
+        imageUrl: extra?.imageUrl || null,
+        imageMeta: extra?.imageMeta || null,
       },
     };
 

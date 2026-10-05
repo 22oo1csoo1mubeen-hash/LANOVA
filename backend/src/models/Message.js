@@ -20,10 +20,34 @@ const messageSchema = new mongoose.Schema(
     },
     content: {
       type: String,
-      required: [true, 'Message content cannot be empty'],
       trim: true,
-      minlength: [1, 'Message must contain at least 1 character'],
+      default: '',
       maxlength: [5000, 'Message cannot exceed 5000 characters'],
+      validate: {
+        validator: function (v) {
+          // If this message contains an image, text content/caption is optional
+          if (this.messageType === 'image' || this.imageUrl) {
+            return true;
+          }
+          return typeof v === 'string' && v.trim().length > 0;
+        },
+        message: 'Message content cannot be empty',
+      },
+    },
+    messageType: {
+      type: String,
+      enum: ['text', 'image'],
+      default: 'text',
+      index: true,
+    },
+    imageUrl: {
+      type: String,
+      default: null,
+    },
+    imageMeta: {
+      fileName: { type: String, default: null },
+      fileSize: { type: Number, default: null },
+      mimeType: { type: String, default: null },
     },
   },
   {
@@ -41,6 +65,9 @@ messageSchema.set('toJSON', {
     ret.id = ret._id.toString();
     ret.senderId = ret.sender.toString();
     ret.receiverId = ret.receiver.toString();
+    ret.messageType = ret.messageType || (ret.imageUrl ? 'image' : 'text');
+    ret.imageUrl = ret.imageUrl || null;
+    ret.imageMeta = ret.imageMeta || null;
     delete ret._id;
     delete ret.sender;
     delete ret.receiver;

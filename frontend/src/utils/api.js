@@ -56,11 +56,57 @@ async function request(endpoint, options = {}) {
   }
 }
 
+/**
+ * Safely resolves relative media/upload paths (e.g. /uploads/image.png)
+ * to full backend server URLs based on current network host.
+ */
+export function getMediaUrl(path) {
+  if (!path) return '';
+  if (
+    path.startsWith('http://') ||
+    path.startsWith('https://') ||
+    path.startsWith('data:') ||
+    path.startsWith('blob:')
+  ) {
+    return path;
+  }
+  const baseUrl = getApiBaseUrl();
+  return `${baseUrl}${path.startsWith('/') ? '' : '/'}${path}`;
+}
+
 export const api = {
   get: (endpoint, options) => request(endpoint, { method: 'GET', ...options }),
   post: (endpoint, body, options) => request(endpoint, { method: 'POST', body: JSON.stringify(body), ...options }),
   put: (endpoint, body, options) => request(endpoint, { method: 'PUT', body: JSON.stringify(body), ...options }),
   del: (endpoint, options) => request(endpoint, { method: 'DELETE', ...options }),
+  upload: async (endpoint, formData, options = {}) => {
+    const baseUrl = getApiBaseUrl();
+    const url = `${baseUrl}${endpoint}`;
+    const token = sessionStorage.getItem('lanova_token');
+
+    const headers = {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options.headers,
+    };
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: formData,
+      ...options,
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const errorMsg = data.message || `Upload failed with status ${response.status}`;
+      const error = new Error(errorMsg);
+      error.status = response.status;
+      throw error;
+    }
+
+    return data;
+  },
 };
 
 export default api;

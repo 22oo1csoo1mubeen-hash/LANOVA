@@ -34,6 +34,9 @@ function formatMessage(msg, currentUserId) {
     senderId: msg.senderId?.toString(),
     receiverId: msg.receiverId?.toString(),
     text: msg.content || msg.text || '',
+    messageType: msg.messageType || (msg.imageUrl ? 'image' : 'text'),
+    imageUrl: msg.imageUrl || null,
+    imageMeta: msg.imageMeta || null,
     time: timeStr || 'Just now',
     createdAt: msg.createdAt,
     read: true,
@@ -188,7 +191,10 @@ export default function ChatPage() {
           const currentList = prev[otherUserId] || [];
           // Replace matching temporary optimistic message or append
           const tempIdx = currentList.findIndex(
-            (m) => m.id.startsWith('temp_') && m.text === formattedMsg.text
+            (m) =>
+              m.id.startsWith('temp_') &&
+              ((formattedMsg.imageUrl && m.messageType === 'image') ||
+                m.text === formattedMsg.text)
           );
 
           if (tempIdx !== -1) {
@@ -238,8 +244,10 @@ export default function ChatPage() {
   }, []);
 
   const handleSendMessage = useCallback(
-    (text) => {
-      if (!selectedUser || !text.trim()) return;
+    async (text, imagePayload = null) => {
+      if (!selectedUser) return;
+      const trimmedText = typeof text === 'string' ? text.trim() : '';
+      if (!trimmedText && !imagePayload) return;
 
       const now = new Date();
       const hours = now.getHours();
@@ -248,13 +256,18 @@ export default function ChatPage() {
       const formattedHours = hours % 12 || 12;
       const timeStr = `${formattedHours}:${minutes} ${ampm}`;
 
+      const tempId = `temp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
       // Optimistic message bubble
       const optimisticMsg = {
-        id: `temp_${Date.now()}`,
+        id: tempId,
         sender: 'me',
         senderId: user?.id,
         receiverId: selectedUser.id,
-        text: text.trim(),
+        text: trimmedText,
+        messageType: imagePayload ? 'image' : 'text',
+        imageUrl: imagePayload?.previewUrl || imagePayload?.imageUrl || null,
+        imageMeta: imagePayload?.imageMeta || null,
         time: timeStr,
         createdAt: now.toISOString(),
         read: true,
@@ -268,11 +281,35 @@ export default function ChatPage() {
         };
       });
 
-      // Send over TCP WebSocket
+      // Send over TCP WebSocket (with image upload if file is attached)
       try {
-        sendMessage(selectedUser.id, text.trim());
+        let finalImageUrl = imagePayload?.imageUrl || null;
+        let finalImageMeta = imagePayload?.imageMeta || null;
+
+        if (imagePayload?.file) {
+          const formData = new FormData();
+          formData.append('image', imagePayload.file);
+          const uploadRes = await api.upload('/api/messages/upload', formData);
+          finalImageUrl = uploadRes.imageUrl;
+          finalImageMeta = uploadRes.imageMeta;
+        }
+
+        sendMessage(selectedUser.id, trimmedText, {
+          messageType: finalImageUrl ? 'image' : 'text',
+          imageUrl: finalImageUrl,
+          imageMeta: finalImageMeta,
+        });
       } catch (err) {
-        console.error('[ChatPage] Failed to send message via WebSocket:', err.message);
+        console.error('[ChatPage] Failed to send message:', err.message);
+        // Rollback optimistic message if upload/sending failed
+        setConversations((prev) => {
+          const currentList = prev[selectedUser.id] || [];
+          return {
+            ...prev,
+            [selectedUser.id]: currentList.filter((m) => m.id !== tempId),
+          };
+        });
+        alert(`Failed to send message: ${err.message}`);
       }
     },
     [selectedUser, user?.id, sendMessage]

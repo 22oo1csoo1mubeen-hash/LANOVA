@@ -1,3 +1,6 @@
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -8,10 +11,23 @@ import networkRoutes from './routes/networkRoutes.js';
 import { getHealth } from './controllers/networkController.js';
 import { notFoundHandler, errorHandler } from './middleware/errorMiddleware.js';
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const uploadsDir = path.resolve(__dirname, '../uploads');
+
+// Ensure uploads folder exists
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
 export const app = express();
 
-// Security HTTP headers
-app.use(helmet());
+// Security HTTP headers — allow cross-origin resource requests for shared media/images across LAN
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+  })
+);
 
 // Dynamic CORS configuration supporting localhost, 127.0.0.1, and LAN IP addresses
 const clientUrls = (process.env.CLIENT_URL || 'http://localhost:5173,http://localhost:5174')
@@ -46,6 +62,9 @@ app.use(
 // Body parsers
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Serve uploaded media files statically
+app.use('/uploads', express.static(uploadsDir));
 
 // Health check endpoint
 app.get('/api/health', getHealth);

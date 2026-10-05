@@ -3,6 +3,7 @@ import {
   Search,
   MoreVertical,
   Paperclip,
+  Image as ImageIcon,
   Smile,
   Send,
   CheckCheck,
@@ -15,17 +16,21 @@ import {
   Trash2,
   Bell,
   BellOff,
+  UploadCloud,
+  Maximize2,
 } from 'lucide-react';
 import Avatar from './Avatar';
 import EmojiPicker from './EmojiPicker';
 import UserInfoModal from './UserInfoModal';
 import ConfirmModal from './ConfirmModal';
+import { getMediaUrl } from '../utils/api';
 
 /**
  * ChatArea — central conversation panel.
  * Contains the conversation header with search & more options,
  * scrollable message bubbles with search highlight,
- * interactive emoji picker, and the message composer with attachment & send.
+ * interactive emoji picker, image attachments, lightbox viewer,
+ * and the message composer with drag & drop + paste support.
  */
 export default function ChatArea({
   selectedUser,
@@ -36,6 +41,11 @@ export default function ChatArea({
 }) {
   const [inputText, setInputText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+
+  // Staged image for upload & preview
+  const [stagedImage, setStagedImage] = useState(null);
+  const [activeLightboxImage, setActiveLightboxImage] = useState(null);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   // Search in conversation state
   const [showSearch, setShowSearch] = useState(false);
@@ -52,6 +62,7 @@ export default function ChatArea({
   const inputRef = useRef(null);
   const emojiButtonRef = useRef(null);
   const fileInputRef = useRef(null);
+  const imageInputRef = useRef(null);
   const menuRef = useRef(null);
   const cursorPosRef = useRef(null);
 
@@ -137,7 +148,48 @@ export default function ChatArea({
     }
   };
 
-  // Handle attachment file selection
+  const formatFileSize = (bytes) => {
+    if (!bytes) return '';
+    const kb = bytes / 1024;
+    if (kb < 1024) return `${Math.round(kb)} KB`;
+    return `${(kb / 1024).toFixed(1)} MB`;
+  };
+
+  const stageImageFile = useCallback((file) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      alert('Only image files (PNG, JPG, GIF, WebP, SVG, BMP) can be shared as photos.');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      alert('Image file size exceeds the 10MB limit.');
+      return;
+    }
+    const previewUrl = URL.createObjectURL(file);
+    setStagedImage({
+      file,
+      previewUrl,
+      name: file.name,
+      size: file.size,
+      sizeStr: formatFileSize(file.size),
+    });
+    if (inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, []);
+
+  const clearStagedImage = useCallback(() => {
+    setStagedImage((prev) => {
+      if (prev?.previewUrl?.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(prev.previewUrl);
+        } catch {}
+      }
+      return null;
+    });
+  }, []);
+
+  // Handle attachment file selection (routes images to stageImageFile)
   const handleAttachClick = () => {
     if (fileInputRef.current) {
       fileInputRef.current.click();
@@ -147,15 +199,70 @@ export default function ChatArea({
   const handleFileSelect = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const sizeKB = Math.round(file.size / 1024);
-    const sizeStr = sizeKB > 1024 ? `${(sizeKB / 1024).toFixed(1)} MB` : `${sizeKB} KB`;
-    const label = `📎 [${file.name} - ${sizeStr}]`;
-    setInputText((prev) => (prev ? `${prev} ${label}` : label));
+    if (file.type.startsWith('image/')) {
+      stageImageFile(file);
+    } else {
+      const sizeKB = Math.round(file.size / 1024);
+      const sizeStr = sizeKB > 1024 ? `${(sizeKB / 1024).toFixed(1)} MB` : `${sizeKB} KB`;
+      const label = `📎 [${file.name} - ${sizeStr}]`;
+      setInputText((prev) => (prev ? `${prev} ${label}` : label));
+    }
     e.target.value = '';
     if (inputRef.current) {
       inputRef.current.focus();
     }
   };
+
+  // Drag and drop handlers
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragOver) setIsDragOver(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    setIsDragOver(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file && file.type.startsWith('image/')) {
+      stageImageFile(file);
+    }
+  };
+
+  // Clipboard paste handler (Ctrl+V with image screenshot)
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith('image/')) {
+        const file = items[i].getAsFile();
+        if (file) {
+          e.preventDefault();
+          stageImageFile(file);
+          break;
+        }
+      }
+    }
+  };
+
+  // Close Lightbox on ESC
+  useEffect(() => {
+    const handleKey = (e) => {
+      if (e.key === 'Escape') {
+        setActiveLightboxImage(null);
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
 
   // Auto-scroll messages container smoothly to bottom on new messages
   useEffect(() => {
@@ -179,9 +286,25 @@ export default function ChatArea({
 
   const handleSubmit = (e) => {
     if (e) e.preventDefault();
-    if (!inputText.trim()) return;
-    onSendMessage(inputText.trim());
+    if (!inputText.trim() && !stagedImage) return;
+
+    onSendMessage(
+      inputText.trim(),
+      stagedImage
+        ? {
+            file: stagedImage.file,
+            previewUrl: stagedImage.previewUrl,
+            imageMeta: {
+              fileName: stagedImage.name,
+              fileSize: stagedImage.size,
+              mimeType: stagedImage.file.type,
+            },
+          }
+        : null
+    );
+
     setInputText('');
+    clearStagedImage();
     cursorPosRef.current = 0;
     setShowEmojiPicker(false);
   };
@@ -240,7 +363,25 @@ export default function ChatArea({
   };
 
   return (
-    <section className="chat-main-area" aria-label="Conversation">
+    <section
+      className={`chat-main-area${isDragOver ? ' drag-active' : ''}`}
+      aria-label="Conversation"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      onPaste={handlePaste}
+    >
+      {/* Drag & Drop Visual Overlay */}
+      {isDragOver && (
+        <div className="chat-drag-overlay anim-fade-in">
+          <div className="chat-drag-box">
+            <UploadCloud size={48} className="drag-cloud-icon" />
+            <h3 className="drag-title">Drop image to share</h3>
+            <p className="drag-subtitle">Supports PNG, JPG, GIF, WebP up to 10MB</p>
+          </div>
+        </div>
+      )}
+
       {/* Top Header */}
       <div className="chat-header">
         <div className="chat-header-user">
@@ -443,6 +584,8 @@ export default function ChatArea({
             const isMe = msg.sender === 'me';
             const isMatched = matchedMessageIds.includes(msg.id);
             const isActiveMatch = matchedMessageIds[activeMatchIndex] === msg.id;
+            const hasImage = Boolean(msg.imageUrl);
+            const resolvedImageUrl = hasImage ? getMediaUrl(msg.imageUrl) : null;
 
             return (
               <div
@@ -455,9 +598,41 @@ export default function ChatArea({
                 <div
                   className={`chat-bubble ${isMe ? 'bubble-sent' : 'bubble-received'}${
                     isActiveMatch ? ' active-match' : isMatched ? ' search-match' : ''
-                  }`}
+                  }${hasImage ? ' has-image' : ''}`}
                 >
-                  <span className="bubble-text">{msg.text}</span>
+                  {hasImage && (
+                    <div
+                      className="bubble-image-wrap"
+                      onClick={() =>
+                        setActiveLightboxImage({
+                          url: resolvedImageUrl,
+                          fileName: msg.imageMeta?.fileName || 'image.png',
+                          time: msg.time,
+                          sender: isMe ? 'You' : selectedUser?.username || 'Peer',
+                          caption: msg.text,
+                        })
+                      }
+                      title="Click to view full image"
+                    >
+                      <img
+                        src={resolvedImageUrl}
+                        alt={msg.text || msg.imageMeta?.fileName || 'Shared photo'}
+                        className="bubble-image"
+                        loading="lazy"
+                      />
+                      <div className="bubble-image-overlay">
+                        <Maximize2 size={16} className="bubble-zoom-icon" />
+                        <span>View</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {Boolean(msg.text) && (
+                    <span className={`bubble-text${hasImage ? ' bubble-caption' : ''}`}>
+                      {msg.text}
+                    </span>
+                  )}
+
                   <div className="bubble-meta">
                     <span className="bubble-time">{msg.time}</span>
                     {isMe && (
@@ -482,74 +657,193 @@ export default function ChatArea({
 
       {/* Message Composer */}
       <div className="chat-composer-wrap" role="region" aria-label="Message composer">
-        <div className="chat-composer-bar">
-          {/* Attachment button */}
+        {/* Staged Image Preview Bar (Appears above the input bar) */}
+        {stagedImage && (
+          <div className="chat-staged-image-bar anim-fade-up">
+            <div className="staged-image-preview-wrap">
+              <div className="staged-image-thumb-box">
+                <img
+                  src={stagedImage.previewUrl}
+                  alt={stagedImage.name}
+                  className="staged-image-thumb"
+                />
+              </div>
+              <div className="staged-image-info">
+                <span className="staged-image-name" title={stagedImage.name}>
+                  {stagedImage.name}
+                </span>
+                <div className="staged-image-meta-row">
+                  <span className="staged-image-size-pill">{stagedImage.sizeStr}</span>
+                  <span className="staged-image-hint">Ready to send</span>
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="staged-image-remove-btn"
+              onClick={clearStagedImage}
+              title="Remove attached image"
+              aria-label="Remove attached image"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
+        {/* Input Composer Row */}
+        <div className="chat-composer-row">
+          <div className="chat-composer-bar">
+            {/* Share photo/image button */}
+            <button
+              type="button"
+              className="composer-icon-btn"
+              aria-label="Share photo"
+              title="Share photo / image"
+              onClick={() => imageInputRef.current?.click()}
+            >
+              <ImageIcon size={18} strokeWidth={1.8} />
+            </button>
+            <input
+              type="file"
+              ref={imageInputRef}
+              accept="image/png, image/jpeg, image/gif, image/webp, image/svg+xml, image/bmp"
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) stageImageFile(file);
+                e.target.value = '';
+              }}
+            />
+
+            {/* Attachment button */}
+            <button
+              type="button"
+              className="composer-icon-btn"
+              aria-label="Attach file"
+              title="Attach file"
+              onClick={handleAttachClick}
+            >
+              <Paperclip size={18} strokeWidth={1.8} />
+            </button>
+            <input
+              type="file"
+              ref={fileInputRef}
+              style={{ display: 'none' }}
+              onChange={handleFileSelect}
+            />
+
+            {/* Multiline Message Textarea with enterKeyHint="enter" for next line return */}
+            <textarea
+              ref={inputRef}
+              rows={1}
+              name="chat-msg-content"
+              id="chat-composer-input"
+              autoComplete="off"
+              autoCorrect="on"
+              autoCapitalize="sentences"
+              spellCheck="true"
+              enterKeyHint="enter"
+              data-form-type="other"
+              data-lpignore="true"
+              data-1p-ignore="true"
+              className="composer-input"
+              placeholder={stagedImage ? 'Add a caption... (optional)' : 'Type a message...'}
+              value={inputText}
+              onChange={handleInputChange}
+              onSelect={handleInputSelect}
+              onClick={handleInputSelect}
+              onKeyUp={handleInputSelect}
+              onFocus={handleInputFocus}
+              onKeyDown={handleKeyDown}
+              aria-label="Type a message"
+            />
+
+            {/* Emoji button */}
+            <button
+              ref={emojiButtonRef}
+              type="button"
+              className={`composer-icon-btn${showEmojiPicker ? ' active' : ''}`}
+              aria-label="Add emoji"
+              aria-expanded={showEmojiPicker}
+              onClick={handleToggleEmoji}
+            >
+              <Smile size={18} strokeWidth={1.8} />
+            </button>
+          </div>
+
+          {/* Circular glowing Send button */}
           <button
             type="button"
-            className="composer-icon-btn"
-            aria-label="Attach file"
-            title="Attach file"
-            onClick={handleAttachClick}
+            className="composer-send-btn"
+            aria-label="Send message"
+            disabled={!inputText.trim() && !stagedImage}
+            onClick={handleSubmit}
           >
-            <Paperclip size={18} strokeWidth={1.8} />
-          </button>
-          <input
-            type="file"
-            ref={fileInputRef}
-            style={{ display: 'none' }}
-            onChange={handleFileSelect}
-          />
-
-          {/* Multiline Message Textarea with enterKeyHint="enter" for next line return */}
-          <textarea
-            ref={inputRef}
-            rows={1}
-            name="chat-msg-content"
-            id="chat-composer-input"
-            autoComplete="off"
-            autoCorrect="on"
-            autoCapitalize="sentences"
-            spellCheck="true"
-            enterKeyHint="enter"
-            data-form-type="other"
-            data-lpignore="true"
-            data-1p-ignore="true"
-            className="composer-input"
-            placeholder="Type a message..."
-            value={inputText}
-            onChange={handleInputChange}
-            onSelect={handleInputSelect}
-            onClick={handleInputSelect}
-            onKeyUp={handleInputSelect}
-            onFocus={handleInputFocus}
-            onKeyDown={handleKeyDown}
-            aria-label="Type a message"
-          />
-
-          {/* Emoji button */}
-          <button
-            ref={emojiButtonRef}
-            type="button"
-            className={`composer-icon-btn${showEmojiPicker ? ' active' : ''}`}
-            aria-label="Add emoji"
-            aria-expanded={showEmojiPicker}
-            onClick={handleToggleEmoji}
-          >
-            <Smile size={18} strokeWidth={1.8} />
+            <Send size={18} strokeWidth={2.2} className="send-icon" />
           </button>
         </div>
-
-        {/* Circular glowing Send button */}
-        <button
-          type="button"
-          className="composer-send-btn"
-          aria-label="Send message"
-          disabled={!inputText.trim()}
-          onClick={handleSubmit}
-        >
-          <Send size={18} strokeWidth={2.2} className="send-icon" />
-        </button>
       </div>
+
+      {/* Lightbox / Fullscreen Image Viewer Modal */}
+      {activeLightboxImage && (
+        <div
+          className="image-lightbox-overlay anim-fade-in"
+          onClick={() => setActiveLightboxImage(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Full-size Image Preview"
+        >
+          <div
+            className="image-lightbox-container"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="image-lightbox-header">
+              <div className="lightbox-file-info">
+                <span className="lightbox-filename">
+                  {activeLightboxImage.fileName}
+                </span>
+                <span className="lightbox-meta">
+                  Sent by {activeLightboxImage.sender} • {activeLightboxImage.time}
+                </span>
+              </div>
+              <div className="lightbox-actions">
+                <a
+                  href={activeLightboxImage.url}
+                  download={activeLightboxImage.fileName}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="lightbox-action-btn"
+                  title="Download image"
+                >
+                  <Download size={15} />
+                  <span>Download</span>
+                </a>
+                <button
+                  type="button"
+                  className="lightbox-close-btn"
+                  onClick={() => setActiveLightboxImage(null)}
+                  title="Close viewer (Esc)"
+                  aria-label="Close viewer"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+            </div>
+            <div className="image-lightbox-body">
+              <img
+                src={activeLightboxImage.url}
+                alt={activeLightboxImage.caption || activeLightboxImage.fileName}
+                className="image-lightbox-main-img"
+              />
+            </div>
+            {activeLightboxImage.caption && (
+              <div className="image-lightbox-footer">
+                <p className="lightbox-caption">{activeLightboxImage.caption}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Contact Profile Modal */}
       {showProfileModal && (

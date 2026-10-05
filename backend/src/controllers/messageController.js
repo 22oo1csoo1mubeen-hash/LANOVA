@@ -43,3 +43,29 @@ export async function getConversation(req, res, next) {
     next(error);
   }
 }
+
+/**
+ * Handle image file upload for chat sharing.
+ * Returns relative image URL and file metadata.
+ */
+export async function uploadImage(req, res, next) {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No image file uploaded' });
+    }
+
+    const relativeUrl = `/uploads/${req.file.filename}`;
+
+    return res.status(201).json({
+      success: true,
+      imageUrl: relativeUrl,
+      imageMeta: {
+        fileName: req.file.originalname,
+        fileSize: req.file.size,
+        mimeType: req.file.mimetype,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}

@@ -59,7 +59,7 @@ export async function handleSocketMessage(ws, user, rawData) {
  */
 async function handleSendMessage(ws, sender, payload) {
   try {
-    const { receiverId, content } = payload || {};
+    const { receiverId, content, messageType = 'text', imageUrl, imageMeta } = payload || {};
 
     // 1. Validate payload presence
     if (!receiverId || typeof receiverId !== 'string') {
@@ -86,15 +86,17 @@ async function handleSendMessage(ws, sender, payload) {
       });
     }
 
-    // 4. Validate message content
-    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+    // 4. Validate message content and image
+    const hasImage = Boolean(imageUrl && typeof imageUrl === 'string' && imageUrl.trim().length > 0);
+    const trimmedContent = typeof content === 'string' ? content.trim() : '';
+
+    if (!hasImage && trimmedContent.length === 0) {
       return connectionManager.send(ws, {
         type: 'error',
         payload: { message: 'Message content cannot be empty' },
       });
     }
 
-    const trimmedContent = content.trim();
     if (trimmedContent.length > 5000) {
       return connectionManager.send(ws, {
         type: 'error',
@@ -112,10 +114,18 @@ async function handleSendMessage(ws, sender, payload) {
     }
 
     // 6. Persist message in MongoDB FIRST (guarantee persistence before delivery attempt)
+    const isImage = hasImage || messageType === 'image';
     const savedMessage = await Message.create({
       sender: sender._id,
       receiver: receiverId,
       content: trimmedContent,
+      messageType: isImage ? 'image' : 'text',
+      imageUrl: hasImage ? imageUrl.trim() : null,
+      imageMeta: isImage && imageMeta ? {
+        fileName: imageMeta.fileName || 'image',
+        fileSize: Number(imageMeta.fileSize) || 0,
+        mimeType: imageMeta.mimeType || 'image/png',
+      } : undefined,
     });
 
     const messagePayload = {
@@ -123,6 +133,9 @@ async function handleSendMessage(ws, sender, payload) {
       senderId,
       receiverId,
       content: savedMessage.content,
+      messageType: savedMessage.messageType,
+      imageUrl: savedMessage.imageUrl,
+      imageMeta: savedMessage.imageMeta,
       createdAt: savedMessage.createdAt.toISOString(),
     };
 
