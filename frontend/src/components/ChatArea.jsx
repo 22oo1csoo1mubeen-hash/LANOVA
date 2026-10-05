@@ -26,6 +26,42 @@ import ConfirmModal from './ConfirmModal';
 import { getMediaUrl } from '../utils/api';
 
 /**
+ * Formats a message timestamp into a friendly human-readable date group header:
+ * - "Today" if message was sent today
+ * - "Yesterday" if message was sent yesterday
+ * - Day name ("Monday", "Tuesday", etc.) if sent within last 6 days
+ * - "Month Day, Year" or "Month Day" if older
+ */
+function formatChatDateDivider(dateStr) {
+  if (!dateStr) return 'Today';
+  const messageDate = new Date(dateStr);
+  if (isNaN(messageDate.getTime())) return 'Today';
+
+  const now = new Date();
+
+  // Normalize both dates to midnight local time for accurate calendar day comparison
+  const msgMidnight = new Date(messageDate.getFullYear(), messageDate.getMonth(), messageDate.getDate());
+  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const diffDays = Math.round((todayMidnight.getTime() - msgMidnight.getTime()) / msPerDay);
+
+  if (diffDays <= 0) {
+    return 'Today';
+  }
+  if (diffDays === 1) {
+    return 'Yesterday';
+  }
+  if (diffDays > 1 && diffDays < 7) {
+    return messageDate.toLocaleDateString(undefined, { weekday: 'long' });
+  }
+  if (messageDate.getFullYear() === now.getFullYear()) {
+    return messageDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+  return messageDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+/**
  * ChatArea — central conversation panel.
  * Contains the conversation header with search & more options,
  * scrollable message bubbles with search highlight,
@@ -573,77 +609,104 @@ export default function ChatArea({
 
       {/* Message History */}
       <div className="chat-messages-container" ref={messagesContainerRef}>
-        {/* Date badge */}
-        <div className="chat-date-divider">
-          <span className="chat-date-pill">Today</span>
-        </div>
+        {messages.length === 0 ? (
+          <div className="chat-empty-convo anim-fade-in">
+            <span className="empty-convo-pill">
+              No messages yet. Send a message to start chatting!
+            </span>
+          </div>
+        ) : (
+          <div className="chat-messages-list">
+            {messages.map((msg, index) => {
+              const isMe = msg.sender === 'me';
+              const isMatched = matchedMessageIds.includes(msg.id);
+              const isActiveMatch = matchedMessageIds[activeMatchIndex] === msg.id;
+              const hasImage = Boolean(msg.imageUrl);
+              const resolvedImageUrl = hasImage ? getMediaUrl(msg.imageUrl) : null;
 
-        {/* Message bubbles */}
-        <div className="chat-messages-list">
-          {messages.map((msg) => {
-            const isMe = msg.sender === 'me';
-            const isMatched = matchedMessageIds.includes(msg.id);
-            const isActiveMatch = matchedMessageIds[activeMatchIndex] === msg.id;
-            const hasImage = Boolean(msg.imageUrl);
-            const resolvedImageUrl = hasImage ? getMediaUrl(msg.imageUrl) : null;
+              // Check if date changed between consecutive messages
+              const getMsgDateKey = (raw) => {
+                if (!raw) return new Date().toDateString();
+                const d = new Date(raw);
+                return isNaN(d.getTime()) ? new Date().toDateString() : d.toDateString();
+              };
+              const currentMsgDate = getMsgDateKey(msg.createdAt);
+              const prevMsg = index > 0 ? messages[index - 1] : null;
+              const prevMsgDate = prevMsg ? getMsgDateKey(prevMsg.createdAt) : null;
+              const showDateDivider = index === 0 || currentMsgDate !== prevMsgDate;
+              const dateDividerLabel = showDateDivider
+                ? formatChatDateDivider(msg.createdAt)
+                : null;
 
-            return (
-              <div
-                key={msg.id}
-                id={`msg-${msg.id}`}
-                className={`chat-bubble-row ${isMe ? 'row-sent' : 'row-received'}${
-                  isActiveMatch ? ' active-match-row' : ''
-                }`}
-              >
-                <div
-                  className={`chat-bubble ${isMe ? 'bubble-sent' : 'bubble-received'}${
-                    isActiveMatch ? ' active-match' : isMatched ? ' search-match' : ''
-                  }${hasImage ? ' has-image' : ''}`}
-                >
-                  {hasImage && (
+              return (
+                <div key={msg.id} className="chat-msg-entry-wrap">
+                  {showDateDivider && (
                     <div
-                      className="bubble-image-wrap"
-                      onClick={() =>
-                        setActiveLightboxImage({
-                          url: resolvedImageUrl,
-                          fileName: msg.imageMeta?.fileName || 'image.png',
-                          time: msg.time,
-                          sender: isMe ? 'You' : selectedUser?.username || 'Peer',
-                          caption: msg.text,
-                        })
-                      }
-                      title="Click to view full image"
+                      className="chat-date-divider anim-fade-in"
+                      role="separator"
+                      aria-label={dateDividerLabel}
                     >
-                      <img
-                        src={resolvedImageUrl}
-                        alt={msg.text || msg.imageMeta?.fileName || 'Shared photo'}
-                        className="bubble-image"
-                        loading="lazy"
-                      />
-                      <div className="bubble-image-overlay">
-                        <Maximize2 size={16} className="bubble-zoom-icon" />
-                        <span>View</span>
-                      </div>
+                      <span className="chat-date-pill">{dateDividerLabel}</span>
                     </div>
                   )}
 
-                  {Boolean(msg.text) && (
-                    <span className={`bubble-text${hasImage ? ' bubble-caption' : ''}`}>
-                      {msg.text}
-                    </span>
-                  )}
+                  <div
+                    id={`msg-${msg.id}`}
+                    className={`chat-bubble-row ${isMe ? 'row-sent' : 'row-received'}${
+                      isActiveMatch ? ' active-match-row' : ''
+                    }`}
+                  >
+                    <div
+                      className={`chat-bubble ${isMe ? 'bubble-sent' : 'bubble-received'}${
+                        isActiveMatch ? ' active-match' : isMatched ? ' search-match' : ''
+                      }${hasImage ? ' has-image' : ''}`}
+                    >
+                      {hasImage && (
+                        <div
+                          className="bubble-image-wrap"
+                          onClick={() =>
+                            setActiveLightboxImage({
+                              url: resolvedImageUrl,
+                              fileName: msg.imageMeta?.fileName || 'image.png',
+                              time: msg.time,
+                              sender: isMe ? 'You' : selectedUser?.username || 'Peer',
+                              caption: msg.text,
+                            })
+                          }
+                          title="Click to view full image"
+                        >
+                          <img
+                            src={resolvedImageUrl}
+                            alt={msg.text || msg.imageMeta?.fileName || 'Shared photo'}
+                            className="bubble-image"
+                            loading="lazy"
+                          />
+                          <div className="bubble-image-overlay">
+                            <Maximize2 size={16} className="bubble-zoom-icon" />
+                            <span>View</span>
+                          </div>
+                        </div>
+                      )}
 
-                  <div className="bubble-meta">
-                    <span className="bubble-time">{msg.time}</span>
-                    {isMe && (
-                      <CheckCheck size={14} className="bubble-check" strokeWidth={2.2} />
-                    )}
+                      {Boolean(msg.text) && (
+                        <span className={`bubble-text${hasImage ? ' bubble-caption' : ''}`}>
+                          {msg.text}
+                        </span>
+                      )}
+
+                      <div className="bubble-meta">
+                        <span className="bubble-time">{msg.time}</span>
+                        {isMe && (
+                          <CheckCheck size={14} className="bubble-check" strokeWidth={2.2} />
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* Emoji Picker Popup */}

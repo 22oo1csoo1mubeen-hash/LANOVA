@@ -69,3 +69,41 @@ export async function uploadImage(req, res, next) {
     next(error);
   }
 }
+
+/**
+ * Clear all messages in a conversation between authenticated user and target user.
+ */
+export async function clearConversation(req, res, next) {
+  try {
+    const currentUserId = req.user.id;
+    const { userId: otherUserId } = req.params;
+
+    // Validate that the other user ID is a valid MongoDB ObjectId
+    if (!mongoose.Types.ObjectId.isValid(otherUserId)) {
+      return res.status(400).json({ message: 'Invalid recipient user ID format' });
+    }
+
+    // Check if other user exists
+    const otherUser = await User.findById(otherUserId);
+    if (!otherUser) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Delete all messages exchanged between the two users
+    const result = await Message.deleteMany({
+      $or: [
+        { sender: currentUserId, receiver: otherUserId },
+        { sender: otherUserId, receiver: currentUserId },
+      ],
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Conversation cleared successfully',
+      deletedCount: result.deletedCount,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+

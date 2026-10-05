@@ -243,6 +243,21 @@ async function runTests() {
     assert(historyAfter.data.messages[0].content === textMsg1, 'First message content matches chronologically');
     assert(historyAfter.data.messages[1].content === textMsg2, 'Second (offline) message content matches chronologically');
 
+    // 12. Test DELETE /api/messages/:userId (Clear Conversation)
+    const clearRes = await request(`/api/messages/${userBId}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${tokenA}` },
+    });
+    assert(clearRes.status === 200, 'DELETE /api/messages/:userId succeeds with 200');
+    assert(clearRes.data.success === true, 'DELETE response indicates success');
+    assert(clearRes.data.deletedCount >= 2, 'DELETE removed messages from MongoDB');
+
+    // Verify history is now empty after clear
+    const historyCleared = await request(`/api/messages/${userBId}`, {
+      headers: { Authorization: `Bearer ${tokenA}` },
+    });
+    assert(historyCleared.data.messages.length === 0, 'Conversation history is empty after clear');
+
     // Close remaining socket
     wsA.close();
 

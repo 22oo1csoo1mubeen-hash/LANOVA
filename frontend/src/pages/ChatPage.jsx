@@ -38,7 +38,7 @@ function formatMessage(msg, currentUserId) {
     imageUrl: msg.imageUrl || null,
     imageMeta: msg.imageMeta || null,
     time: timeStr || 'Just now',
-    createdAt: msg.createdAt,
+    createdAt: msg.createdAt || new Date().toISOString(),
     read: true,
   };
 }
@@ -52,7 +52,7 @@ function formatMessage(msg, currentUserId) {
  */
 export default function ChatPage() {
   const { user } = useAuth();
-  const { isUserOnline, sendMessage, addMessageListener, isConnected } = useSocket();
+  const { isUserOnline, sendMessage, addMessageListener } = useSocket();
 
   // Initialize state with sessionStorage persistence to maintain selected conversation across page navigation
   const [rawUsers, setRawUsers] = useState(() => {
@@ -315,13 +315,37 @@ export default function ChatPage() {
     [selectedUser, user?.id, sendMessage]
   );
 
-  const handleClearConversation = useCallback((targetUserId) => {
-    if (!targetUserId) return;
-    setConversations((prev) => ({
-      ...prev,
-      [targetUserId]: [],
-    }));
-  }, []);
+  const handleClearConversation = useCallback(
+    async (targetUserId) => {
+      if (!targetUserId) return;
+
+      // 1. Immediately clear messages in UI
+      setConversations((prev) => ({
+        ...prev,
+        [targetUserId]: [],
+      }));
+
+      // 2. Delete messages permanently from MongoDB
+      try {
+        await api.del(`/api/messages/${targetUserId}`);
+        setLoadedHistory((prev) => new Set(prev).add(targetUserId));
+      } catch (err) {
+        console.error('[ChatPage] Failed to clear conversation from database:', err.message);
+        // Reload if delete failed
+        try {
+          const data = await api.get(`/api/messages/${targetUserId}`);
+          if (data?.messages) {
+            setConversations((prev) => ({
+              ...prev,
+              [targetUserId]: data.messages.map((m) => formatMessage(m, user?.id)),
+            }));
+          }
+        } catch {}
+        alert(`Failed to clear conversation: ${err.message}`);
+      }
+    },
+    [user?.id]
+  );
 
   const currentMessages = conversations[selectedUser?.id] || [];
 
