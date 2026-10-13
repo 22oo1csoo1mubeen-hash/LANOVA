@@ -14,18 +14,23 @@ function formatMessage(msg, currentUserId) {
     msg.sender === 'me' ||
     (currentUserId && msg.senderId?.toString() === currentUserId.toString());
 
-  let timeStr = msg.time;
-  if (!timeStr && msg.createdAt) {
+  let timeStr = '';
+  if (msg.createdAt) {
     try {
       const date = new Date(msg.createdAt);
-      const hours = date.getHours();
-      const minutes = date.getMinutes().toString().padStart(2, '0');
-      const ampm = hours >= 12 ? 'PM' : 'AM';
-      const formattedHours = hours % 12 || 12;
-      timeStr = `${formattedHours}:${minutes} ${ampm}`;
+      if (!isNaN(date.getTime())) {
+        const hours = date.getHours();
+        const minutes = date.getMinutes().toString().padStart(2, '0');
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        const formattedHours = hours % 12 || 12;
+        timeStr = `${formattedHours}:${minutes} ${ampm}`;
+      }
     } catch {
       timeStr = '';
     }
+  }
+  if (!timeStr && msg.time) {
+    timeStr = msg.time;
   }
 
   const messageType =
@@ -46,6 +51,19 @@ function formatMessage(msg, currentUserId) {
     createdAt: msg.createdAt || new Date().toISOString(),
     read: true,
   };
+}
+
+/**
+ * Sorts messages strictly in ascending chronological order
+ */
+function sortMessagesChronologically(list) {
+  if (!Array.isArray(list)) return [];
+  return [...list].sort((a, b) => {
+    const timeA = new Date(a.createdAt || 0).getTime();
+    const timeB = new Date(b.createdAt || 0).getTime();
+    if (timeA !== timeB) return timeA - timeB;
+    return String(a.id || '').localeCompare(String(b.id || ''));
+  });
 }
 
 /**
@@ -151,7 +169,7 @@ export default function ChatPage() {
           const formatted = data.messages.map((m) => formatMessage(m, user?.id));
           setConversations((prev) => ({
             ...prev,
-            [selectedUserId]: formatted,
+            [selectedUserId]: sortMessagesChronologically(formatted),
           }));
           setLoadedHistory((prev) => new Set(prev).add(selectedUserId));
         }
@@ -184,7 +202,7 @@ export default function ChatPage() {
           }
           return {
             ...prev,
-            [otherUserId]: [...currentList, formattedMsg],
+            [otherUserId]: sortMessagesChronologically([...currentList, formattedMsg]),
           };
         });
       } else if (type === 'message:sent' && payload) {
@@ -206,7 +224,7 @@ export default function ChatPage() {
           if (tempIdx !== -1) {
             const updated = [...currentList];
             updated[tempIdx] = formattedMsg;
-            return { ...prev, [otherUserId]: updated };
+            return { ...prev, [otherUserId]: sortMessagesChronologically(updated) };
           }
 
           if (currentList.some((m) => m.id === formattedMsg.id)) {
@@ -215,7 +233,7 @@ export default function ChatPage() {
 
           return {
             ...prev,
-            [otherUserId]: [...currentList, formattedMsg],
+            [otherUserId]: sortMessagesChronologically([...currentList, formattedMsg]),
           };
         });
       } else if (type === 'conversation:cleared' && payload) {
@@ -309,7 +327,7 @@ export default function ChatPage() {
         const currentList = prev[selectedUser.id] || [];
         return {
           ...prev,
-          [selectedUser.id]: [...currentList, optimisticMsg],
+          [selectedUser.id]: sortMessagesChronologically([...currentList, optimisticMsg]),
         };
       });
 

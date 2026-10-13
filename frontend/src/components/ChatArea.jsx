@@ -93,11 +93,10 @@ function getFileInfo(fileName) {
 }
 
 /**
- * Formats a message timestamp into a friendly human-readable date group header:
+ * Formats a message timestamp into a friendly human-readable date group header (WhatsApp style):
  * - "Today" if message was sent today
  * - "Yesterday" if message was sent yesterday
- * - Day name ("Monday", "Tuesday", etc.) if sent within last 6 days
- * - "Month Day, Year" or "Month Day" if older
+ * - Exact date (e.g. "12 October 2026") for past dates
  */
 function formatChatDateDivider(dateStr) {
   if (!dateStr) return 'Today';
@@ -119,13 +118,23 @@ function formatChatDateDivider(dateStr) {
   if (diffDays === 1) {
     return 'Yesterday';
   }
-  if (diffDays > 1 && diffDays < 7) {
-    return messageDate.toLocaleDateString(undefined, { weekday: 'long' });
-  }
-  if (messageDate.getFullYear() === now.getFullYear()) {
-    return messageDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  }
-  return messageDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+
+  // Exact calendar date: e.g. "12 October 2026"
+  return messageDate.toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+/**
+ * Returns a unique local calendar day key (YYYY-MM-DD) for grouping
+ */
+function getMessageDateKey(dateStr) {
+  if (!dateStr) return 'today';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return 'today';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 /**
@@ -187,14 +196,47 @@ export default function ChatArea({
     }
   }, [showMoreMenu]);
 
+  // Ensure messages are strictly sorted chronologically
+  const sortedMessages = useMemo(() => {
+    if (!Array.isArray(messages)) return [];
+    return [...messages].sort((a, b) => {
+      const timeA = new Date(a.createdAt || 0).getTime();
+      const timeB = new Date(b.createdAt || 0).getTime();
+      if (timeA !== timeB) return timeA - timeB;
+      return String(a.id || '').localeCompare(String(b.id || ''));
+    });
+  }, [messages]);
+
+  // Group sorted messages by calendar date for WhatsApp-style date sections
+  const messageDateGroups = useMemo(() => {
+    if (!sortedMessages.length) return [];
+    const groups = [];
+    let currentGroup = null;
+
+    for (const msg of sortedMessages) {
+      const dateKey = getMessageDateKey(msg.createdAt);
+      if (!currentGroup || currentGroup.dateKey !== dateKey) {
+        currentGroup = {
+          dateKey,
+          label: formatChatDateDivider(msg.createdAt),
+          messages: [],
+        };
+        groups.push(currentGroup);
+      }
+      currentGroup.messages.push(msg);
+    }
+
+    return groups;
+  }, [sortedMessages]);
+
   // Compute matched message IDs for in-conversation search
   const matchedMessageIds = useMemo(() => {
     if (!searchQuery.trim()) return [];
     const q = searchQuery.toLowerCase().trim();
-    return messages
+    return sortedMessages
       .filter((m) => m.text?.toLowerCase().includes(q))
       .map((m) => m.id);
-  }, [messages, searchQuery]);
+  }, [sortedMessages, searchQuery]);
 
   const handlePrevMatch = () => {
     if (matchedMessageIds.length === 0) return;
@@ -223,17 +265,17 @@ export default function ChatArea({
 
   // Export current conversation transcript to a text file
   const handleExportChat = () => {
-    if (!messages.length) {
+    if (!sortedMessages.length) {
       alert('No messages to export in this conversation.');
       return;
     }
-    const transcript = messages
+    const transcript = sortedMessages
       .map(
         (m) =>
-          `[${m.time || ''}] ${m.sender === 'me' ? 'You' : selectedUser?.username || 'Peer'}: ${m.text}`
+          `[${formatChatDateDivider(m.createdAt)} ${m.time || ''}] ${m.sender === 'me' ? 'You' : selectedUser?.username || 'Peer'}: ${m.text || (m.fileUrl ? '[File attachment]' : m.imageUrl ? '[Image]' : '')}`
       )
       .join('\n');
-    const header = `========================================\nLANOVA Chat Transcript with ${selectedUser?.username || 'Peer'}\nExported: ${new Date().toLocaleString()}\nTotal Messages: ${messages.length}\n========================================\n\n`;
+    const header = `========================================\nLANOVA Chat Transcript with ${selectedUser?.username || 'Peer'}\nExported: ${new Date().toLocaleString()}\nTotal Messages: ${sortedMessages.length}\n========================================\n\n`;
     const blob = new Blob([header + transcript], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -424,7 +466,7 @@ export default function ChatArea({
         behavior: 'smooth',
       });
     }
-  }, [messages, selectedUser, searchQuery]);
+  }, [sortedMessages, selectedUser, searchQuery]);
 
   // Auto-resize textarea smoothly as user types or adds newlines (up to max 120px)
   useEffect(() => {
@@ -740,7 +782,7 @@ export default function ChatArea({
 
       {/* Message History */}
       <div className="chat-messages-container" ref={messagesContainerRef}>
-        {messages.length === 0 ? (
+        {sortedMessages.length === 0 ? (
           <div className="chat-empty-convo anim-fade-in">
             <span className="empty-convo-pill">
               No messages yet. Send a message to start chatting!
@@ -748,51 +790,38 @@ export default function ChatArea({
           </div>
         ) : (
           <div className="chat-messages-list">
-            {messages.map((msg, index) => {
-              const isMe = msg.sender === 'me';
-              const isMatched = matchedMessageIds.includes(msg.id);
-              const isActiveMatch = matchedMessageIds[activeMatchIndex] === msg.id;
-              const hasImage = Boolean(msg.imageUrl);
-              const hasFile = Boolean(msg.fileUrl) || msg.messageType === 'file';
-              const resolvedImageUrl = hasImage ? getMediaUrl(msg.imageUrl) : null;
-              const resolvedFileUrl = hasFile ? getMediaUrl(msg.fileUrl) : null;
-              const fileInfo = hasFile
-                ? getFileInfo(msg.fileMeta?.fileName || msg.text)
-                : null;
-              const FileBadgeIcon = fileInfo ? fileInfo.Icon : File;
+            {messageDateGroups.map((group) => (
+              <div key={group.dateKey} className="chat-date-group">
+                <div
+                  className="chat-date-divider anim-fade-in"
+                  role="separator"
+                  aria-label={group.label}
+                >
+                  <span className="chat-date-pill">{group.label}</span>
+                </div>
 
-              // Check if date changed between consecutive messages
-              const getMsgDateKey = (raw) => {
-                if (!raw) return new Date().toDateString();
-                const d = new Date(raw);
-                return isNaN(d.getTime()) ? new Date().toDateString() : d.toDateString();
-              };
-              const currentMsgDate = getMsgDateKey(msg.createdAt);
-              const prevMsg = index > 0 ? messages[index - 1] : null;
-              const prevMsgDate = prevMsg ? getMsgDateKey(prevMsg.createdAt) : null;
-              const showDateDivider = index === 0 || currentMsgDate !== prevMsgDate;
-              const dateDividerLabel = showDateDivider
-                ? formatChatDateDivider(msg.createdAt)
-                : null;
+                <div className="chat-date-group-messages">
+                  {group.messages.map((msg) => {
+                    const isMe = msg.sender === 'me';
+                    const isMatched = matchedMessageIds.includes(msg.id);
+                    const isActiveMatch = matchedMessageIds[activeMatchIndex] === msg.id;
+                    const hasImage = Boolean(msg.imageUrl);
+                    const hasFile = Boolean(msg.fileUrl) || msg.messageType === 'file';
+                    const resolvedImageUrl = hasImage ? getMediaUrl(msg.imageUrl) : null;
+                    const resolvedFileUrl = hasFile ? getMediaUrl(msg.fileUrl) : null;
+                    const fileInfo = hasFile
+                      ? getFileInfo(msg.fileMeta?.fileName || msg.text)
+                      : null;
+                    const FileBadgeIcon = fileInfo ? fileInfo.Icon : File;
 
-              return (
-                <div key={msg.id} className="chat-msg-entry-wrap">
-                  {showDateDivider && (
-                    <div
-                      className="chat-date-divider anim-fade-in"
-                      role="separator"
-                      aria-label={dateDividerLabel}
-                    >
-                      <span className="chat-date-pill">{dateDividerLabel}</span>
-                    </div>
-                  )}
-
-                  <div
-                    id={`msg-${msg.id}`}
-                    className={`chat-bubble-row ${isMe ? 'row-sent' : 'row-received'}${
-                      isActiveMatch ? ' active-match-row' : ''
-                    }`}
-                  >
+                    return (
+                      <div
+                        key={msg.id}
+                        id={`msg-${msg.id}`}
+                        className={`chat-bubble-row ${isMe ? 'row-sent' : 'row-received'}${
+                          isActiveMatch ? ' active-match-row' : ''
+                        }`}
+                      >
                     {/* Hover delete action button */}
                     {onDeleteMessage && (
                       <div className="bubble-actions-wrap">
@@ -928,12 +957,14 @@ export default function ChatArea({
                       </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                );
+              })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
 
       {/* Emoji Picker Popup */}
       {showEmojiPicker && (
