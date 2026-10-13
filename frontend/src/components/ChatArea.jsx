@@ -11,6 +11,7 @@ import {
   X,
   ChevronUp,
   ChevronDown,
+  ArrowDown,
   User,
   Download,
   Trash2,
@@ -147,6 +148,7 @@ function getMessageDateKey(dateStr) {
 export default function ChatArea({
   selectedUser,
   messages,
+  mobileChatOpen = false,
   onSendMessage,
   onBack,
   onClearConversation,
@@ -154,6 +156,7 @@ export default function ChatArea({
 }) {
   const [inputText, setInputText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
 
   // Staged image for upload & preview
   const [stagedImage, setStagedImage] = useState(null);
@@ -182,6 +185,10 @@ export default function ChatArea({
   const imageInputRef = useRef(null);
   const menuRef = useRef(null);
   const cursorPosRef = useRef(null);
+  const isNearBottomRef = useRef(true);
+  const prevMessagesCountRef = useRef(0);
+  const prevSelectedUserIdRef = useRef(null);
+  const prevMobileOpenRef = useRef(mobileChatOpen);
 
   // Close more menu on outside click
   useEffect(() => {
@@ -493,15 +500,121 @@ export default function ChatArea({
     return () => window.removeEventListener('keydown', handleKey);
   }, []);
 
-  // Auto-scroll messages container smoothly to bottom on new messages
-  useEffect(() => {
-    if (messagesContainerRef.current && !searchQuery.trim()) {
-      messagesContainerRef.current.scrollTo({
-        top: messagesContainerRef.current.scrollHeight,
+  // Direct scroll to bottom (auto = instant jump, smooth = animated scroll)
+  const scrollToBottom = useCallback((behavior = 'auto') => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    if (behavior === 'smooth') {
+      container.scrollTo({
+        top: container.scrollHeight,
         behavior: 'smooth',
       });
+    } else {
+      container.scrollTop = container.scrollHeight;
     }
-  }, [sortedMessages, selectedUser, searchQuery]);
+  }, []);
+
+  // Multi-pass scroll down to guarantee bottom position after browser layout reflows and dynamic media render
+  const forceScrollToBottom = useCallback((behavior = 'auto') => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    scrollToBottom(behavior);
+
+    requestAnimationFrame(() => {
+      scrollToBottom(behavior);
+      setTimeout(() => scrollToBottom(behavior), 50);
+      setTimeout(() => scrollToBottom(behavior), 150);
+      setTimeout(() => scrollToBottom(behavior), 300);
+    });
+  }, [scrollToBottom]);
+
+  // 1. Whenever a chat is opened (switching conversation or opening on mobile/laptop):
+  // Instantly open at the most recent messages so the user doesn't need to scroll down
+  useEffect(() => {
+    if (selectedUser?.id) {
+      const isMobile = window.innerWidth <= 768;
+      if (!isMobile || mobileChatOpen) {
+        forceScrollToBottom('auto');
+      }
+    }
+  }, [selectedUser?.id, mobileChatOpen, forceScrollToBottom]);
+
+  // 2. React to messages update, new incoming/outgoing messages, or history loading
+  useEffect(() => {
+    if (!messagesContainerRef.current) return;
+    const currentCount = sortedMessages.length;
+    const prevCount = prevMessagesCountRef.current;
+    const userChanged = prevSelectedUserIdRef.current !== selectedUser?.id;
+    const mobileOpened = !prevMobileOpenRef.current && mobileChatOpen;
+
+    prevMessagesCountRef.current = currentCount;
+    prevSelectedUserIdRef.current = selectedUser?.id;
+    prevMobileOpenRef.current = mobileChatOpen;
+
+    if (searchQuery.trim()) {
+      return;
+    }
+
+    // When chat is first opened, switched user, or history finishes loading:
+    // Jump immediately to the most recent chat messages
+    if (userChanged || mobileOpened || (prevCount === 0 && currentCount > 0)) {
+      forceScrollToBottom('auto');
+      return;
+    }
+
+    // When a new message arrives:
+    if (currentCount > prevCount) {
+      const lastMsg = sortedMessages[currentCount - 1];
+      if (lastMsg?.sender === 'me') {
+        // Current user sent the message: always scroll down smoothly
+        forceScrollToBottom('smooth');
+      } else if (isNearBottomRef.current) {
+        // Other user sent message and current user was already at the bottom: keep view scrolled to recent
+        forceScrollToBottom('smooth');
+      } else {
+        // Current user is scrolled up reading earlier messages: maintain position & show scroll-down button
+        setShowScrollBottom(true);
+      }
+    }
+  }, [sortedMessages, selectedUser?.id, mobileChatOpen, searchQuery, forceScrollToBottom]);
+
+  // 3. Keep messages pinned to bottom on window resize (e.g. mobile keyboard toggle or device orientation)
+  useEffect(() => {
+    const handleResize = () => {
+      if (isNearBottomRef.current && messagesContainerRef.current) {
+        messagesContainerRef.current.scrollTop = messagesContainerRef.current.scrollHeight;
+      }
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  // 4. Scroll event listener on messages container:
+  // Detects when user scrolls up away from recent messages to toggle the scroll-down button
+  const handleScroll = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+
+    const isNear = distanceFromBottom < 120;
+    isNearBottomRef.current = isNear;
+
+    // Show floating button when scrolled up (> 140px away from bottom) and there is scrollable content
+    if (scrollHeight > clientHeight + 80 && distanceFromBottom > 140) {
+      setShowScrollBottom(true);
+    } else {
+      setShowScrollBottom(false);
+    }
+  }, []);
+
+  // 5. Automatic scroll-down button click handler
+  const handleScrollToBottomClick = useCallback(() => {
+    forceScrollToBottom('smooth');
+    setShowScrollBottom(false);
+  }, [forceScrollToBottom]);
 
   // Auto-resize textarea smoothly as user types or adds newlines (up to max 120px)
   useEffect(() => {
@@ -815,8 +928,13 @@ export default function ChatArea({
         </div>
       )}
 
-      {/* Message History */}
-      <div className="chat-messages-container" ref={messagesContainerRef}>
+      {/* Message History Wrapper & Scroll Container */}
+      <div className="chat-messages-wrapper">
+        <div
+          className="chat-messages-container"
+          ref={messagesContainerRef}
+          onScroll={handleScroll}
+        >
         {sortedMessages.length === 0 ? (
           <div className="chat-empty-convo anim-fade-in">
             <span className="empty-convo-pill">
@@ -897,6 +1015,11 @@ export default function ChatArea({
                             alt={msg.text || msg.imageMeta?.fileName || 'Shared photo'}
                             className="bubble-image"
                             loading="lazy"
+                            onLoad={() => {
+                              if (isNearBottomRef.current) {
+                                scrollToBottom('auto');
+                              }
+                            }}
                           />
                           <div className="bubble-image-overlay">
                             <Maximize2 size={16} className="bubble-zoom-icon" />
@@ -1012,6 +1135,20 @@ export default function ChatArea({
         </div>
       )}
     </div>
+
+    {/* Floating Scroll to Bottom Down-Arrow Button (Appears when scrolled up) */}
+    {showScrollBottom && (
+      <button
+        type="button"
+        className="chat-scroll-bottom-btn"
+        onClick={handleScrollToBottomClick}
+        aria-label="Scroll down to recent messages"
+        title="Go to recent messages"
+      >
+        <ArrowDown size={19} strokeWidth={2.4} />
+      </button>
+    )}
+  </div>
 
       {/* Emoji Picker Popup */}
       {showEmojiPicker && (

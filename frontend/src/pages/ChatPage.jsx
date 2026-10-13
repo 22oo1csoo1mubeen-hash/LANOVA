@@ -464,6 +464,7 @@ export default function ChatPage() {
       <ChatArea
         selectedUser={selectedUser}
         messages={currentMessages}
+        mobileChatOpen={mobileChatOpen}
         onSendMessage={handleSendMessage}
         onBack={handleBackToUsers}
         onClearConversation={handleClearConversation}
