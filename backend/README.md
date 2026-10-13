@@ -25,18 +25,19 @@ backend/
 │   │   └── db.js                 # MongoDB connection & reconnect logic with Mongoose
 │   ├── controllers/
 │   │   ├── authController.js     # User registration, login, and profile retrieval
-│   │   ├── messageController.js  # Message history fetching between users
+│   │   ├── messageController.js  # Message history fetching, file uploads, conversation & message deletion
 │   │   ├── networkController.js  # Health check & LAN network telemetry
 │   │   └── userController.js     # Registered user directory (excluding current user)
 │   ├── middleware/
 │   │   ├── authMiddleware.js     # Express JWT bearer token validation
+│   │   ├── uploadMiddleware.js   # Multer storage configuration for images (15MB) & any file extension (100MB)
 │   │   └── errorMiddleware.js    # 404 handler and centralized error pipeline
 │   ├── models/
-│   │   ├── Message.js            # Mongoose schema for persistent private messages
+│   │   ├── Message.js            # Mongoose schema for persistent private messages (text, image, file)
 │   │   └── User.js               # Mongoose schema for user accounts & bcrypt hashing
 │   ├── routes/
 │   │   ├── authRoutes.js         # Routes for /api/auth (register, login, me)
-│   │   ├── messageRoutes.js      # Routes for /api/messages/:userId
+│   │   ├── messageRoutes.js      # Routes for /api/messages (history, uploads, deletions)
 │   │   ├── networkRoutes.js      # Routes for /api/network/info
 │   │   └── userRoutes.js         # Routes for /api/users
 │   ├── sockets/
@@ -47,12 +48,15 @@ backend/
 │   ├── utils/
 │   │   ├── generateToken.js      # JWT signing utility
 │   │   └── networkUtils.js       # OS network interfaces inspection & LAN IP resolution
-│   ├── app.js                    # Express app initialization, Helmet, CORS & middleware
+│   ├── app.js                    # Express app initialization, Helmet, CORS, static uploads & middleware
 │   └── server.js                 # HTTP & WebSocket server entrypoint (binds to 0.0.0.0)
+├── uploads/                      # Dedicated on-disk storage directory for shared photos and documents
 ├── tests/
-│   ├── auth.test.js              # Automated tests for authentication & user listing
-│   ├── chat.test.js              # Automated tests for WebSocket messaging & persistence
-│   └── network.test.js           # Automated tests for LAN IP detection & telemetry
+│   ├── auth.test.js              # Automated tests for authentication & user listing (Milestone 1)
+│   ├── chat.test.js              # Automated tests for WebSocket messaging & persistence (Milestone 2)
+│   ├── network.test.js           # Automated tests for LAN IP detection & telemetry (Milestone 3)
+│   ├── image_upload.test.js      # Automated tests for image uploading, storage & disk cleanup
+│   └── file_and_chat_fixes.test.js # Automated tests for generic file sharing, uncapped history & deletions
 ├── .env.example                  # Environment variables template
 ├── package.json                  # Dependencies and npm scripts
 └── README.md                     # This backend documentation file
@@ -72,11 +76,21 @@ backend/
 - **Native `ws` Engine**: Attached directly to the Express HTTP server at path `/ws`.
 - **Authenticated Handshake**: Authenticates client connections via query parameter `?token=<JWT>` or initial authentication event.
 - **Active Connection Manager**: Tracks active TCP sockets mapped by user ID. Supports multiple connections per user if opened in multiple tabs.
-- **Message Delivery**: Routes messages to the recipient's active socket in real-time. Automatically acknowledges message receipt and database persistence to the sender.
+- **Multi-Type Message Delivery**: Routes text, image, and generic file messages in real-time. Automatically acknowledges message receipt and database persistence to the sender.
+- **Real-Time Peer Sync for Deletions**: Broadcasts `conversation:cleared` and `message:deleted` events so peer chat windows update instantaneously without refreshing.
 - **Presence Broadcasts**: Automatically broadcasts `user:status` events (`online` / `offline`) to all active peers on connection and disconnection.
 - **Offline Message Persistence**: Messages sent to an offline user are safely stored in MongoDB; recipient receives them upon opening the conversation.
 
-### 3. Network Detection & LAN Connectivity
+### 3. Image & Universal File Sharing (LAN-Optimized)
+- **WhatsApp-Style File Sharing**: Supports sharing files of **any file extension** (`.pdf`, `.docx`, `.xlsx`, `.zip`, `.mp3`, `.mp4`, `.apk`, code, etc.) up to **100MB** directly over the local network.
+- **Image Sharing**: High-resolution image uploads (`png`, `jpg`, `gif`, `webp`, `svg`, `bmp`) up to 15MB with optional captions.
+- **Automatic Disk Cleanup**: When a message or an entire conversation is deleted, associated media files stored on disk in `uploads/` are automatically deleted to prevent orphaned files.
+
+### 4. Reliable Uncapped Message Storage
+- **Unbounded History**: Eliminated artificial message caps and limit cutoffs; complete conversations are stored in MongoDB and returned in exact chronological order.
+- **Granular Deletions**: Supports both clearing an entire conversation (`DELETE /api/messages/:userId`) and deleting individual messages (`DELETE /api/messages/item/:messageId`).
+
+### 5. Network Detection & LAN Connectivity
 - **Physical Adapter Detection**: Uses `os.networkInterfaces()` in `networkUtils.js` to inspect active physical adapters (Ethernet, Wi-Fi), automatically excluding internal loopback and virtual adapters (VMware, VirtualBox, WSL).
 - **Subnet Resolution**: Extracts the host IPv4 address and subnet mask (e.g. `255.255.255.0`).
 - **Multi-Interface Binding**: Listens on `0.0.0.0` so requests from any LAN peer are accepted.
@@ -166,7 +180,8 @@ Lists all registered users except the requesting caller.
   ```
 
 #### `GET /api/messages/:userId`
-Retrieves chronological message history between caller and target user.
+Retrieves chronological message history between caller and target user without artificial caps or limits.
+- **Query Params**: `?limit=50` (optional, omits limit by default to fetch all conversation history)
 - **Response `200 OK`**:
   ```json
   {
@@ -176,9 +191,63 @@ Retrieves chronological message history between caller and target user.
         "senderId": "6701...9a",
         "receiverId": "6701...bc",
         "content": "Hello Bob! Testing LAN chat.",
+        "messageType": "text",
         "createdAt": "2026-10-04T08:47:00.000Z"
       }
     ]
+  }
+  ```
+
+#### `POST /api/messages/upload`
+Uploads an image (PNG, JPG, GIF, WebP, SVG, BMP up to 15MB) with optional caption for private LAN sharing.
+- **Request**: `multipart/form-data` with fields `image` (binary file) and `caption` (optional string).
+- **Response `201 Created`**:
+  ```json
+  {
+    "message": "Image uploaded successfully",
+    "imageUrl": "/uploads/image-1791915000000-123456789.png",
+    "caption": "Check out this screenshot",
+    "fileName": "screenshot.png",
+    "fileSize": 1048576,
+    "mimeType": "image/png"
+  }
+  ```
+
+#### `POST /api/messages/upload-file`
+Uploads a document or file of **any file extension** (`.pdf`, `.docx`, `.xlsx`, `.zip`, `.mp3`, `.mp4`, code, etc.) up to 100MB over LAN.
+- **Request**: `multipart/form-data` with fields `file` (binary file) and `caption` (optional string).
+- **Response `201 Created`**:
+  ```json
+  {
+    "message": "File uploaded successfully",
+    "fileUrl": "/uploads/file-1791915000000-987654321.pdf",
+    "fileMeta": {
+      "fileName": "Annual_Report.pdf",
+      "fileSize": 2451200,
+      "mimeType": "application/pdf",
+      "extension": ".pdf"
+    },
+    "caption": "Project documentation"
+  }
+  ```
+
+#### `DELETE /api/messages/:userId`
+Clears entire conversation history between the caller and the specified user, cleans up all attached media files from disk, and broadcasts a real-time `conversation:cleared` WebSocket event to both peers.
+- **Response `200 OK`**:
+  ```json
+  {
+    "message": "Conversation cleared successfully",
+    "deletedCount": 42
+  }
+  ```
+
+#### `DELETE /api/messages/item/:messageId`
+Deletes an individual message sent by or involving the caller, cleans up its uploaded file/image from disk, and broadcasts a real-time `message:deleted` WebSocket event to peers.
+- **Response `200 OK`**:
+  ```json
+  {
+    "message": "Message deleted successfully",
+    "messageId": "6701...ef"
   }
   ```
 
@@ -217,12 +286,21 @@ Connect via: `ws://<HOST_IP>:5000/ws?token=<JWT>`
 ### Client ➔ Server
 
 #### 1. `message:send`
+Supports text, image, and generic file messages:
 ```json
 {
   "type": "message:send",
   "payload": {
     "receiverId": "6701...bc",
-    "content": "Hey there! How is the network demo going?"
+    "content": "Here is the presentation file",
+    "messageType": "file",
+    "fileUrl": "/uploads/file-1791915000000-987654321.pdf",
+    "fileMeta": {
+      "fileName": "Annual_Report.pdf",
+      "fileSize": 2451200,
+      "mimeType": "application/pdf",
+      "extension": ".pdf"
+    }
   }
 }
 ```
@@ -246,7 +324,15 @@ Connect via: `ws://<HOST_IP>:5000/ws?token=<JWT>`
     "id": "6701...ef",
     "senderId": "6701...9a",
     "receiverId": "6701...bc",
-    "content": "Hey there! How is the network demo going?",
+    "content": "Here is the presentation file",
+    "messageType": "file",
+    "fileUrl": "/uploads/file-1791915000000-987654321.pdf",
+    "fileMeta": {
+      "fileName": "Annual_Report.pdf",
+      "fileSize": 2451200,
+      "mimeType": "application/pdf",
+      "extension": ".pdf"
+    },
     "status": "saved",
     "createdAt": "2026-10-04T08:47:00.000Z"
   }
@@ -261,13 +347,42 @@ Connect via: `ws://<HOST_IP>:5000/ws?token=<JWT>`
     "id": "6701...ef",
     "senderId": "6701...9a",
     "receiverId": "6701...bc",
-    "content": "Hey there! How is the network demo going?",
+    "content": "Here is the presentation file",
+    "messageType": "file",
+    "fileUrl": "/uploads/file-1791915000000-987654321.pdf",
+    "fileMeta": {
+      "fileName": "Annual_Report.pdf",
+      "fileSize": 2451200,
+      "mimeType": "application/pdf",
+      "extension": ".pdf"
+    },
     "createdAt": "2026-10-04T08:47:00.000Z"
   }
 }
 ```
 
-#### 3. `user:status` (Presence Broadcast)
+#### 3. `conversation:cleared` (Peer Conversation Clear Event)
+```json
+{
+  "type": "conversation:cleared",
+  "payload": {
+    "peerId": "6701...9a"
+  }
+}
+```
+
+#### 4. `message:deleted` (Peer Message Delete Event)
+```json
+{
+  "type": "message:deleted",
+  "payload": {
+    "messageId": "6701...ef",
+    "peerId": "6701...9a"
+  }
+}
+```
+
+#### 5. `user:status` (Presence Broadcast)
 ```json
 {
   "type": "user:status",
@@ -278,7 +393,7 @@ Connect via: `ws://<HOST_IP>:5000/ws?token=<JWT>`
 }
 ```
 
-#### 4. `users:online` (Online Snapshot)
+#### 6. `users:online` (Online Snapshot)
 ```json
 {
   "type": "users:online",
@@ -288,7 +403,7 @@ Connect via: `ws://<HOST_IP>:5000/ws?token=<JWT>`
 }
 ```
 
-#### 5. `error`
+#### 7. `error`
 ```json
 {
   "type": "error",
@@ -323,18 +438,20 @@ CLIENT_URL=http://localhost:5173,http://localhost:5174
 
 ## 🧪 Automated Testing
 
-The backend includes 3 standalone test scripts built with Node's native test assert capabilities.
+The backend includes **137 tests across 5 standalone test suites** built with Node's native assert capabilities:
 
 ```bash
 cd backend
 
-# Run all test suites sequentially:
+# Run all test suites sequentially (137 tests):
 npm run test:all
 
-# Or run individual milestone suites:
-npm run test           # Milestone 1: Auth, password hashing, user listings
-npm run test:chat      # Milestone 2: WebSocket handshake, messaging, presence
-npm run test:network   # Milestone 3: Interface inspection, IP detection, telemetry
+# Or run individual suites:
+npm run test           # Milestone 1: Auth, password hashing, user listings (22 tests)
+npm run test:chat      # Milestone 2: WebSocket handshake, messaging, presence (28 tests)
+npm run test:network   # Milestone 3: Interface inspection, IP detection, telemetry (16 tests)
+npm run test:image     # Image uploads, lightbox support & media disk cleanup (40 tests)
+npm run test:files     # Generic file sharing (any extension), uncapped history & deletions (31 tests)
 ```
 
 > [!IMPORTANT]

@@ -71,7 +71,7 @@ const upload = multer({
 });
 
 /**
- * Express middleware wrapper to handle multer errors gracefully.
+ * Express middleware wrapper to handle multer errors gracefully for image uploads.
  */
 export function handleImageUpload(req, res, next) {
   const singleUpload = upload.single('image');
@@ -87,4 +87,68 @@ export function handleImageUpload(req, res, next) {
     }
     next();
   });
+}
+
+// Storage for generic file uploads (supports ANY file extension like WhatsApp files)
+const fileStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, UPLOADS_DIR);
+  },
+  filename: (_req, file, cb) => {
+    const rawExt = path.extname(file.originalname).toLowerCase();
+    const safeExt = /^\.[a-z0-9_-]{1,16}$/i.test(rawExt) ? rawExt : '';
+    const uniqueSuffix = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
+    cb(null, `file-${uniqueSuffix}${safeExt}`);
+  },
+});
+
+const genericFileUpload = multer({
+  storage: fileStorage,
+  limits: {
+    fileSize: 100 * 1024 * 1024, // 100 MB limit for LAN file transfers
+    files: 1,
+  },
+});
+
+/**
+ * Express middleware to handle generic document and file uploads of any extension.
+ * Supports field name 'file', 'attachment', or 'image'.
+ */
+export function handleFileUpload(req, res, next) {
+  const uploadHandler = genericFileUpload.any();
+
+  uploadHandler(req, res, (err) => {
+    if (err instanceof multer.MulterError) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ message: 'File size exceeds the 100MB limit' });
+      }
+      return res.status(400).json({ message: `Upload error: ${err.message}` });
+    } else if (err) {
+      return res.status(400).json({ message: err.message || 'File upload failed' });
+    }
+
+    // Populate req.file from req.files for controller compatibility
+    if (req.files && req.files.length > 0) {
+      req.file = req.files[0];
+    }
+
+    next();
+  });
+}
+
+/**
+ * Safely delete an uploaded file from backend/uploads disk storage.
+ * @param {string} relativeUrl E.g. "/uploads/file-1234.pdf"
+ */
+export function deleteUploadedFile(relativeUrl) {
+  if (!relativeUrl || typeof relativeUrl !== 'string') return;
+  try {
+    const fileName = path.basename(relativeUrl);
+    const filePath = path.join(UPLOADS_DIR, fileName);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+    }
+  } catch (err) {
+    console.warn(`[File Cleanup] Could not delete file ${relativeUrl}:`, err.message);
+  }
 }

@@ -2506,5 +2506,323 @@
   text-align: center;
 }
 
+/* ============================================================
+   WhatsApp-Style File & Document Sharing Bubbles
+   ============================================================ */
+
+.bubble-file-card-wrap {
+  width: 100%;
+  margin-bottom: 2px;
+}
+
+.bubble-file-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+  min-width: 240px;
+  max-width: 340px;
+}
+
+/* Sent message file card */
+.bubble-sent .bubble-file-card {
+  background: rgba(12, 20, 13, 0.25);
+  border: 1px solid rgba(12, 20, 13, 0.2);
+}
+
+.bubble-sent .bubble-file-card:hover {
+  background: rgba(12, 20, 13, 0.35);
+  transform: translateY(-1px);
+}
+
+/* Received message file card */
+.bubble-received .bubble-file-card {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.bubble-received .bubble-file-card:hover {
+  background: rgba(0, 0, 0, 0.48);
+  border-color: rgba(194, 241, 53, 0.3);
+  transform: translateY(-1px);
+}
+
+/* File icon badge with colored background */
+.file-card-icon-badge {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  transition: transform 0.2s ease;
+}
+
+.bubble-file-card:hover .file-card-icon-badge {
+  transform: scale(1.05);
+}
+
+.file-card-icon {
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
+}
+
+.file-card-ext-tag {
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  font-size: 0.58rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  background: #0f1712;
+  color: var(--color-accent, #c2f135);
+  border: 1px solid rgba(194, 241, 53, 0.4);
+  border-radius: 4px;
+  padding: 1px 4px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+
+/* File name & size metadata */
+.file-card-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 3px;
+}
+
+.file-card-name {
+  font-size: 0.86rem;
+  font-weight: 600;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bubble-sent .file-card-name {
+  color: #0c140d;
+}
+
+.bubble-received .file-card-name {
+  color: #ffffff;
+}
+
+.file-card-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  line-height: 1;
+}
+
+.bubble-sent .file-card-meta-row {
+  color: #365314;
+}
+
+.bubble-received .file-card-meta-row {
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.file-card-size {
+  font-weight: 600;
+}
+
+.file-card-bullet {
+  opacity: 0.5;
+}
+
+.file-card-type {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Download button */
+.file-card-download-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  text-decoration: none;
+}
+
+.bubble-sent .file-card-download-btn {
+  background: rgba(12, 20, 13, 0.2);
+  color: #0c140d;
+  border: 1px solid rgba(12, 20, 13, 0.25);
+}
+
+.bubble-sent .file-card-download-btn:hover {
+  background: #0c140d;
+  color: #c2f135;
+  transform: scale(1.1);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+}
+
+.bubble-received .file-card-download-btn {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--color-accent, #c2f135);
+  border: 1px solid rgba(194, 241, 53, 0.25);
+}
+
+.bubble-received .file-card-download-btn:hover {
+  background: var(--color-accent, #c2f135);
+  color: #0c140d;
+  transform: scale(1.1);
+  box-shadow: 0 0 14px rgba(194, 241, 53, 0.45);
+}
+
+/* Staged Generic File Bar above composer */
+.chat-staged-file-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(14, 21, 16, 0.94);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(194, 241, 53, 0.3);
+  border-radius: 16px;
+  width: 100%;
+  box-sizing: border-box;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(194, 241, 53, 0.1);
+  animation: slideUpStaged 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.staged-file-preview-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.staged-file-icon-box {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: #090e0b;
+  border: 1px solid rgba(194, 241, 53, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.staged-file-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.staged-file-name {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.staged-file-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.staged-file-size-pill {
+  font-size: 0.70rem;
+  color: var(--color-accent, #c2f135);
+  font-weight: 700;
+  background: rgba(194, 241, 53, 0.15);
+  padding: 2px 7px;
+  border-radius: 6px;
+  border: 1px solid rgba(194, 241, 53, 0.28);
+  line-height: 1.2;
+}
+
+.staged-file-hint {
+  font-size: 0.72rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-weight: 500;
+}
+
+/* Message Hover Actions (Delete Message Button) */
+.chat-bubble-row {
+  position: relative;
+  align-items: center;
+}
+
+.bubble-actions-wrap {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 8px;
+}
+
+.row-sent .bubble-actions-wrap {
+  order: -1;
+  transform: translateX(4px);
+}
+
+.row-received .bubble-actions-wrap {
+  order: 1;
+  transform: translateX(-4px);
+}
+
+.chat-bubble-row:hover .bubble-actions-wrap {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.bubble-action-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(20, 28, 22, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.35);
+}
+
+.bubble-action-btn:hover {
+  background: rgba(239, 68, 68, 0.25);
+  border-color: rgba(239, 68, 68, 0.45);
+  color: #f87171;
+  transform: scale(1.12);
+}
+
+
 
 

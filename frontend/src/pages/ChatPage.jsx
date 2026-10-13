@@ -28,15 +28,20 @@ function formatMessage(msg, currentUserId) {
     }
   }
 
+  const messageType =
+    msg.messageType || (msg.fileUrl ? 'file' : msg.imageUrl ? 'image' : 'text');
+
   return {
     id: msg.id || msg._id || `msg_${Date.now()}_${Math.random()}`,
     sender: isMe ? 'me' : 'other',
     senderId: msg.senderId?.toString(),
     receiverId: msg.receiverId?.toString(),
     text: msg.content || msg.text || '',
-    messageType: msg.messageType || (msg.imageUrl ? 'image' : 'text'),
+    messageType,
     imageUrl: msg.imageUrl || null,
     imageMeta: msg.imageMeta || null,
+    fileUrl: msg.fileUrl || null,
+    fileMeta: msg.fileMeta || null,
     time: timeStr || 'Just now',
     createdAt: msg.createdAt || new Date().toISOString(),
     read: true,
@@ -193,7 +198,8 @@ export default function ChatPage() {
           const tempIdx = currentList.findIndex(
             (m) =>
               m.id.startsWith('temp_') &&
-              ((formattedMsg.imageUrl && m.messageType === 'image') ||
+              ((formattedMsg.fileUrl && m.messageType === 'file') ||
+                (formattedMsg.imageUrl && m.messageType === 'image') ||
                 m.text === formattedMsg.text)
           );
 
@@ -212,6 +218,28 @@ export default function ChatPage() {
             [otherUserId]: [...currentList, formattedMsg],
           };
         });
+      } else if (type === 'conversation:cleared' && payload) {
+        // Peer cleared conversation with current user in real time
+        const { clearedByUserId, targetUserId } = payload;
+        const peerId = clearedByUserId === user?.id ? targetUserId : clearedByUserId;
+        if (peerId) {
+          setConversations((prev) => ({
+            ...prev,
+            [peerId]: [],
+          }));
+        }
+      } else if (type === 'message:deleted' && payload) {
+        // Individual message deleted in real time
+        const { messageId, peerId } = payload;
+        if (peerId && messageId) {
+          setConversations((prev) => {
+            const currentList = prev[peerId] || [];
+            return {
+              ...prev,
+              [peerId]: currentList.filter((m) => m.id !== messageId),
+            };
+          });
+        }
       }
     });
 
@@ -244,10 +272,10 @@ export default function ChatPage() {
   }, []);
 
   const handleSendMessage = useCallback(
-    async (text, imagePayload = null) => {
+    async (text, attachmentPayload = null) => {
       if (!selectedUser) return;
       const trimmedText = typeof text === 'string' ? text.trim() : '';
-      if (!trimmedText && !imagePayload) return;
+      if (!trimmedText && !attachmentPayload) return;
 
       const now = new Date();
       const hours = now.getHours();
@@ -257,6 +285,8 @@ export default function ChatPage() {
       const timeStr = `${formattedHours}:${minutes} ${ampm}`;
 
       const tempId = `temp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const isFile = attachmentPayload?.type === 'file';
+      const isImage = attachmentPayload?.type === 'image';
 
       // Optimistic message bubble
       const optimisticMsg = {
@@ -265,9 +295,11 @@ export default function ChatPage() {
         senderId: user?.id,
         receiverId: selectedUser.id,
         text: trimmedText,
-        messageType: imagePayload ? 'image' : 'text',
-        imageUrl: imagePayload?.previewUrl || imagePayload?.imageUrl || null,
-        imageMeta: imagePayload?.imageMeta || null,
+        messageType: isFile ? 'file' : isImage ? 'image' : 'text',
+        imageUrl: isImage ? (attachmentPayload?.previewUrl || attachmentPayload?.imageUrl || null) : null,
+        imageMeta: isImage ? (attachmentPayload?.imageMeta || null) : null,
+        fileUrl: isFile ? (attachmentPayload?.fileUrl || null) : null,
+        fileMeta: isFile ? (attachmentPayload?.fileMeta || null) : null,
         time: timeStr,
         createdAt: now.toISOString(),
         read: true,
@@ -281,23 +313,36 @@ export default function ChatPage() {
         };
       });
 
-      // Send over TCP WebSocket (with image upload if file is attached)
+      // Send over TCP WebSocket (with file/image upload first if attachment is staged)
       try {
-        let finalImageUrl = imagePayload?.imageUrl || null;
-        let finalImageMeta = imagePayload?.imageMeta || null;
+        let finalImageUrl = isImage ? (attachmentPayload?.imageUrl || null) : null;
+        let finalImageMeta = isImage ? (attachmentPayload?.imageMeta || null) : null;
+        let finalFileUrl = isFile ? (attachmentPayload?.fileUrl || null) : null;
+        let finalFileMeta = isFile ? (attachmentPayload?.fileMeta || null) : null;
 
-        if (imagePayload?.file) {
+        if (attachmentPayload?.file) {
           const formData = new FormData();
-          formData.append('image', imagePayload.file);
-          const uploadRes = await api.upload('/api/messages/upload', formData);
-          finalImageUrl = uploadRes.imageUrl;
-          finalImageMeta = uploadRes.imageMeta;
+          if (isImage) {
+            formData.append('image', attachmentPayload.file);
+            const uploadRes = await api.upload('/api/messages/upload', formData);
+            finalImageUrl = uploadRes.imageUrl;
+            finalImageMeta = uploadRes.imageMeta;
+          } else {
+            formData.append('file', attachmentPayload.file);
+            const uploadRes = await api.upload('/api/messages/upload-file', formData);
+            finalFileUrl = uploadRes.fileUrl;
+            finalFileMeta = uploadRes.fileMeta;
+          }
         }
 
+        const resolvedType = finalFileUrl ? 'file' : finalImageUrl ? 'image' : 'text';
+
         sendMessage(selectedUser.id, trimmedText, {
-          messageType: finalImageUrl ? 'image' : 'text',
+          messageType: resolvedType,
           imageUrl: finalImageUrl,
           imageMeta: finalImageMeta,
+          fileUrl: finalFileUrl,
+          fileMeta: finalFileMeta,
         });
       } catch (err) {
         console.error('[ChatPage] Failed to send message:', err.message);
@@ -313,6 +358,42 @@ export default function ChatPage() {
       }
     },
     [selectedUser, user?.id, sendMessage]
+  );
+
+  const handleDeleteMessage = useCallback(
+    async (messageId) => {
+      if (!selectedUserId || !messageId) return;
+
+      // Optimistically remove from state
+      setConversations((prev) => {
+        const currentList = prev[selectedUserId] || [];
+        return {
+          ...prev,
+          [selectedUserId]: currentList.filter((m) => m.id !== messageId),
+        };
+      });
+
+      // If temporary optimistic message, no backend call needed
+      if (messageId.startsWith('temp_')) return;
+
+      try {
+        await api.del(`/api/messages/item/${messageId}`);
+      } catch (err) {
+        console.error('[ChatPage] Failed to delete message:', err.message);
+        // Reload history if delete failed
+        try {
+          const data = await api.get(`/api/messages/${selectedUserId}`);
+          if (data?.messages) {
+            setConversations((prev) => ({
+              ...prev,
+              [selectedUserId]: data.messages.map((m) => formatMessage(m, user?.id)),
+            }));
+          }
+        } catch {}
+        alert(`Failed to delete message: ${err.message}`);
+      }
+    },
+    [selectedUserId, user?.id]
   );
 
   const handleClearConversation = useCallback(
@@ -368,6 +449,7 @@ export default function ChatPage() {
         onSendMessage={handleSendMessage}
         onBack={handleBackToUsers}
         onClearConversation={handleClearConversation}
+        onDeleteMessage={handleDeleteMessage}
       />
     </div>
   );

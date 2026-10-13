@@ -18,12 +18,79 @@ import {
   BellOff,
   UploadCloud,
   Maximize2,
+  File,
+  FileText,
+  FileArchive,
+  FileCode,
+  FileSpreadsheet,
+  FileAudio,
+  FileVideo,
 } from 'lucide-react';
 import Avatar from './Avatar';
 import EmojiPicker from './EmojiPicker';
 import UserInfoModal from './UserInfoModal';
 import ConfirmModal from './ConfirmModal';
 import { getMediaUrl } from '../utils/api';
+
+/**
+ * Returns icon, color, and descriptive metadata for any shared file extension
+ */
+function getFileInfo(fileName) {
+  if (!fileName || typeof fileName !== 'string') {
+    return { Icon: File, color: '#94a3b8', label: 'File', ext: 'FILE' };
+  }
+  const parts = fileName.split('.');
+  const ext = parts.length > 1 ? parts.pop().toLowerCase() : '';
+
+  if (ext === 'pdf') {
+    return { Icon: FileText, color: '#ef4444', label: 'PDF Document', ext: 'PDF' };
+  }
+  if (['doc', 'docx', 'odt', 'rtf'].includes(ext)) {
+    return { Icon: FileText, color: '#3b82f6', label: 'Word Document', ext: ext.toUpperCase() };
+  }
+  if (['xls', 'xlsx', 'csv', 'ods'].includes(ext)) {
+    return { Icon: FileSpreadsheet, color: '#10b981', label: 'Spreadsheet', ext: ext.toUpperCase() };
+  }
+  if (['ppt', 'pptx', 'odp'].includes(ext)) {
+    return { Icon: FileText, color: '#f59e0b', label: 'Presentation', ext: ext.toUpperCase() };
+  }
+  if (['zip', 'rar', '7z', 'tar', 'gz', 'bz2'].includes(ext)) {
+    return { Icon: FileArchive, color: '#a855f7', label: 'Archive', ext: ext.toUpperCase() };
+  }
+  if (['mp3', 'wav', 'ogg', 'm4a', 'flac', 'aac'].includes(ext)) {
+    return { Icon: FileAudio, color: '#06b6d4', label: 'Audio', ext: ext.toUpperCase() };
+  }
+  if (['mp4', 'mkv', 'webm', 'mov', 'avi', 'flv'].includes(ext)) {
+    return { Icon: FileVideo, color: '#8b5cf6', label: 'Video', ext: ext.toUpperCase() };
+  }
+  if (
+    [
+      'js',
+      'jsx',
+      'ts',
+      'tsx',
+      'html',
+      'css',
+      'py',
+      'java',
+      'c',
+      'cpp',
+      'json',
+      'xml',
+      'sql',
+      'sh',
+      'md',
+    ].includes(ext)
+  ) {
+    return { Icon: FileCode, color: '#eab308', label: 'Code File', ext: ext.toUpperCase() };
+  }
+  return {
+    Icon: File,
+    color: '#94a3b8',
+    label: ext ? `${ext.toUpperCase()} File` : 'File',
+    ext: ext ? ext.toUpperCase().slice(0, 5) : 'FILE',
+  };
+}
 
 /**
  * Formats a message timestamp into a friendly human-readable date group header:
@@ -65,7 +132,7 @@ function formatChatDateDivider(dateStr) {
  * ChatArea — central conversation panel.
  * Contains the conversation header with search & more options,
  * scrollable message bubbles with search highlight,
- * interactive emoji picker, image attachments, lightbox viewer,
+ * interactive emoji picker, image attachments, generic file sharing, lightbox viewer,
  * and the message composer with drag & drop + paste support.
  */
 export default function ChatArea({
@@ -74,12 +141,16 @@ export default function ChatArea({
   onSendMessage,
   onBack,
   onClearConversation,
+  onDeleteMessage,
 }) {
   const [inputText, setInputText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   // Staged image for upload & preview
   const [stagedImage, setStagedImage] = useState(null);
+  // Staged generic file (any extension like WhatsApp)
+  const [stagedFile, setStagedFile] = useState(null);
+
   const [activeLightboxImage, setActiveLightboxImage] = useState(null);
   const [isDragOver, setIsDragOver] = useState(false);
 
@@ -92,6 +163,7 @@ export default function ChatArea({
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [confirmDeleteMsgId, setConfirmDeleteMsgId] = useState(null);
   const [isMuted, setIsMuted] = useState(false);
 
   const messagesContainerRef = useRef(null);
@@ -191,27 +263,8 @@ export default function ChatArea({
     return `${(kb / 1024).toFixed(1)} MB`;
   };
 
-  const stageImageFile = useCallback((file) => {
-    if (!file) return;
-    if (!file.type.startsWith('image/')) {
-      alert('Only image files (PNG, JPG, GIF, WebP, SVG, BMP) can be shared as photos.');
-      return;
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      alert('Image file size exceeds the 10MB limit.');
-      return;
-    }
-    const previewUrl = URL.createObjectURL(file);
-    setStagedImage({
-      file,
-      previewUrl,
-      name: file.name,
-      size: file.size,
-      sizeStr: formatFileSize(file.size),
-    });
-    if (inputRef.current) {
-      inputRef.current.focus();
-    }
+  const clearStagedFile = useCallback(() => {
+    setStagedFile(null);
   }, []);
 
   const clearStagedImage = useCallback(() => {
@@ -225,7 +278,69 @@ export default function ChatArea({
     });
   }, []);
 
-  // Handle attachment file selection (routes images to stageImageFile)
+  const stageImageFile = useCallback(
+    (file) => {
+      if (!file) return;
+      if (!file.type.startsWith('image/')) {
+        alert('Only image files (PNG, JPG, GIF, WebP, SVG, BMP) can be shared as photos.');
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        alert('Image file size exceeds the 10MB limit.');
+        return;
+      }
+      clearStagedFile();
+      const previewUrl = URL.createObjectURL(file);
+      setStagedImage({
+        file,
+        previewUrl,
+        name: file.name,
+        size: file.size,
+        sizeStr: formatFileSize(file.size),
+      });
+      if (inputRef.current) {
+        inputRef.current.focus();
+      }
+    },
+    [clearStagedFile]
+  );
+
+  const stageGenericFile = useCallback(
+    (file) => {
+      if (!file) return;
+      if (file.size > 100 * 1024 * 1024) {
+        alert('File size exceeds the 100MB limit for LAN sharing.');
+        return;
+      }
+      clearStagedImage();
+      const info = getFileInfo(file.name);
+      setStagedFile({
+        file,
+        name: file.name,
+        size: file.size,
+        sizeStr: formatFileSize(file.size),
+        info,
+      });
+      if (inputRef.current) {
+        inputRef.current.focus();
+      }
+    },
+    [clearStagedImage]
+  );
+
+  const handleDownloadFile = useCallback((url, fileName) => {
+    if (!url) return;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName || 'download';
+    a.target = '_blank';
+    a.rel = 'noreferrer';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }, []);
+
+  // Handle attachment file selection (routes images to stageImageFile and all other extensions to stageGenericFile)
   const handleAttachClick = () => {
     if (fileInputRef.current) {
       fileInputRef.current.click();
@@ -238,10 +353,7 @@ export default function ChatArea({
     if (file.type.startsWith('image/')) {
       stageImageFile(file);
     } else {
-      const sizeKB = Math.round(file.size / 1024);
-      const sizeStr = sizeKB > 1024 ? `${(sizeKB / 1024).toFixed(1)} MB` : `${sizeKB} KB`;
-      const label = `📎 [${file.name} - ${sizeStr}]`;
-      setInputText((prev) => (prev ? `${prev} ${label}` : label));
+      stageGenericFile(file);
     }
     e.target.value = '';
     if (inputRef.current) {
@@ -268,8 +380,12 @@ export default function ChatArea({
     e.stopPropagation();
     setIsDragOver(false);
     const file = e.dataTransfer?.files?.[0];
-    if (file && file.type.startsWith('image/')) {
-      stageImageFile(file);
+    if (file) {
+      if (file.type.startsWith('image/')) {
+        stageImageFile(file);
+      } else {
+        stageGenericFile(file);
+      }
     }
   };
 
@@ -322,25 +438,40 @@ export default function ChatArea({
 
   const handleSubmit = (e) => {
     if (e) e.preventDefault();
-    if (!inputText.trim() && !stagedImage) return;
+    if (!inputText.trim() && !stagedImage && !stagedFile) return;
 
-    onSendMessage(
-      inputText.trim(),
-      stagedImage
-        ? {
-            file: stagedImage.file,
-            previewUrl: stagedImage.previewUrl,
-            imageMeta: {
-              fileName: stagedImage.name,
-              fileSize: stagedImage.size,
-              mimeType: stagedImage.file.type,
-            },
-          }
-        : null
-    );
+    let attachmentPayload = null;
+    if (stagedImage) {
+      attachmentPayload = {
+        type: 'image',
+        file: stagedImage.file,
+        previewUrl: stagedImage.previewUrl,
+        imageMeta: {
+          fileName: stagedImage.name,
+          fileSize: stagedImage.size,
+          mimeType: stagedImage.file.type,
+        },
+      };
+    } else if (stagedFile) {
+      attachmentPayload = {
+        type: 'file',
+        file: stagedFile.file,
+        fileMeta: {
+          fileName: stagedFile.name,
+          fileSize: stagedFile.size,
+          mimeType: stagedFile.file.type || 'application/octet-stream',
+          extension: stagedFile.name.includes('.')
+            ? `.${stagedFile.name.split('.').pop().toLowerCase()}`
+            : '',
+        },
+      };
+    }
+
+    onSendMessage(inputText.trim(), attachmentPayload);
 
     setInputText('');
     clearStagedImage();
+    clearStagedFile();
     cursorPosRef.current = 0;
     setShowEmojiPicker(false);
   };
@@ -543,7 +674,7 @@ export default function ChatArea({
                   }}
                 >
                   <Trash2 size={15} />
-                  <span>Clear messages</span>
+                  <span>Delete chat</span>
                 </button>
               )}
             </div>
@@ -622,7 +753,13 @@ export default function ChatArea({
               const isMatched = matchedMessageIds.includes(msg.id);
               const isActiveMatch = matchedMessageIds[activeMatchIndex] === msg.id;
               const hasImage = Boolean(msg.imageUrl);
+              const hasFile = Boolean(msg.fileUrl) || msg.messageType === 'file';
               const resolvedImageUrl = hasImage ? getMediaUrl(msg.imageUrl) : null;
+              const resolvedFileUrl = hasFile ? getMediaUrl(msg.fileUrl) : null;
+              const fileInfo = hasFile
+                ? getFileInfo(msg.fileMeta?.fileName || msg.text)
+                : null;
+              const FileBadgeIcon = fileInfo ? fileInfo.Icon : File;
 
               // Check if date changed between consecutive messages
               const getMsgDateKey = (raw) => {
@@ -656,11 +793,27 @@ export default function ChatArea({
                       isActiveMatch ? ' active-match-row' : ''
                     }`}
                   >
+                    {/* Hover delete action button */}
+                    {onDeleteMessage && (
+                      <div className="bubble-actions-wrap">
+                        <button
+                          type="button"
+                          className="bubble-action-btn delete"
+                          onClick={() => setConfirmDeleteMsgId(msg.id)}
+                          title="Delete message"
+                          aria-label="Delete message"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    )}
+
                     <div
                       className={`chat-bubble ${isMe ? 'bubble-sent' : 'bubble-received'}${
                         isActiveMatch ? ' active-match' : isMatched ? ' search-match' : ''
-                      }${hasImage ? ' has-image' : ''}`}
+                      }${hasImage ? ' has-image' : ''}${hasFile ? ' has-file' : ''}`}
                     >
+                      {/* Photo / Image bubble */}
                       {hasImage && (
                         <div
                           className="bubble-image-wrap"
@@ -688,8 +841,77 @@ export default function ChatArea({
                         </div>
                       )}
 
+                      {/* Generic File sharing bubble (WhatsApp Style) */}
+                      {hasFile && (
+                        <div className="bubble-file-card-wrap">
+                          <div
+                            className="bubble-file-card"
+                            onClick={() =>
+                              handleDownloadFile(
+                                resolvedFileUrl,
+                                msg.fileMeta?.fileName || 'file'
+                              )
+                            }
+                            title={`Download ${msg.fileMeta?.fileName || 'file'}`}
+                          >
+                            <div
+                              className="file-card-icon-badge"
+                              style={{
+                                borderLeft: `3px solid ${fileInfo.color}`,
+                              }}
+                            >
+                              <FileBadgeIcon
+                                size={22}
+                                className="file-card-icon"
+                                style={{ color: fileInfo.color }}
+                              />
+                              <span className="file-card-ext-tag">
+                                {fileInfo.ext}
+                              </span>
+                            </div>
+                            <div className="file-card-info">
+                              <span
+                                className="file-card-name"
+                                title={msg.fileMeta?.fileName || 'Attachment'}
+                              >
+                                {msg.fileMeta?.fileName || 'Attachment'}
+                              </span>
+                              <div className="file-card-meta-row">
+                                <span className="file-card-size">
+                                  {formatFileSize(msg.fileMeta?.fileSize)}
+                                </span>
+                                <span className="file-card-bullet">•</span>
+                                <span className="file-card-type">
+                                  {fileInfo.label}
+                                </span>
+                              </div>
+                            </div>
+                            <a
+                              href={resolvedFileUrl}
+                              download={msg.fileMeta?.fileName || 'file'}
+                              className="file-card-download-btn"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDownloadFile(
+                                  resolvedFileUrl,
+                                  msg.fileMeta?.fileName || 'file'
+                                );
+                              }}
+                              title="Download file"
+                            >
+                              <Download size={15} strokeWidth={2.2} />
+                            </a>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Optional message / caption text */}
                       {Boolean(msg.text) && (
-                        <span className={`bubble-text${hasImage ? ' bubble-caption' : ''}`}>
+                        <span
+                          className={`bubble-text${
+                            hasImage || hasFile ? ' bubble-caption' : ''
+                          }`}
+                        >
                           {msg.text}
                         </span>
                       )}
@@ -697,7 +919,11 @@ export default function ChatArea({
                       <div className="bubble-meta">
                         <span className="bubble-time">{msg.time}</span>
                         {isMe && (
-                          <CheckCheck size={14} className="bubble-check" strokeWidth={2.2} />
+                          <CheckCheck
+                            size={14}
+                            className="bubble-check"
+                            strokeWidth={2.2}
+                          />
                         )}
                       </div>
                     </div>
@@ -737,7 +963,7 @@ export default function ChatArea({
                 </span>
                 <div className="staged-image-meta-row">
                   <span className="staged-image-size-pill">{stagedImage.sizeStr}</span>
-                  <span className="staged-image-hint">Ready to send</span>
+                  <span className="staged-image-hint">Ready to send photo</span>
                 </div>
               </div>
             </div>
@@ -747,6 +973,40 @@ export default function ChatArea({
               onClick={clearStagedImage}
               title="Remove attached image"
               aria-label="Remove attached image"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+
+        {/* Staged Generic File Preview Bar (WhatsApp Style - Any extension) */}
+        {stagedFile && (
+          <div className="chat-staged-file-bar anim-fade-up">
+            <div className="staged-file-preview-wrap">
+              <div className="staged-file-icon-box">
+                {(() => {
+                  const SIcon = stagedFile.info.Icon;
+                  return <SIcon size={22} style={{ color: stagedFile.info.color }} />;
+                })()}
+              </div>
+              <div className="staged-file-info">
+                <span className="staged-file-name" title={stagedFile.name}>
+                  {stagedFile.name}
+                </span>
+                <div className="staged-file-meta-row">
+                  <span className="staged-file-size-pill">{stagedFile.sizeStr}</span>
+                  <span className="staged-file-hint">
+                    Ready to send • {stagedFile.info.label}
+                  </span>
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="staged-image-remove-btn"
+              onClick={clearStagedFile}
+              title="Remove attached file"
+              aria-label="Remove attached file"
             >
               <X size={16} />
             </button>
@@ -778,12 +1038,12 @@ export default function ChatArea({
               }}
             />
 
-            {/* Attachment button */}
+            {/* Attachment button (Paperclip - ANY file extension like WhatsApp) */}
             <button
               type="button"
               className="composer-icon-btn"
               aria-label="Attach file"
-              title="Attach file"
+              title="Attach any document or file"
               onClick={handleAttachClick}
             >
               <Paperclip size={18} strokeWidth={1.8} />
@@ -810,7 +1070,13 @@ export default function ChatArea({
               data-lpignore="true"
               data-1p-ignore="true"
               className="composer-input"
-              placeholder={stagedImage ? 'Add a caption... (optional)' : 'Type a message...'}
+              placeholder={
+                stagedImage
+                  ? 'Add a photo caption... (optional)'
+                  : stagedFile
+                    ? 'Add a file caption... (optional)'
+                    : 'Type a message...'
+              }
               value={inputText}
               onChange={handleInputChange}
               onSelect={handleInputSelect}
@@ -839,7 +1105,7 @@ export default function ChatArea({
             type="button"
             className="composer-send-btn"
             aria-label="Send message"
-            disabled={!inputText.trim() && !stagedImage}
+            disabled={!inputText.trim() && !stagedImage && !stagedFile}
             onClick={handleSubmit}
           >
             <Send size={18} strokeWidth={2.2} className="send-icon" />
@@ -916,18 +1182,35 @@ export default function ChatArea({
         />
       )}
 
-      {/* Clear Chat Confirmation UI Popup */}
+      {/* Delete Single Message Confirmation Modal */}
+      <ConfirmModal
+        isOpen={Boolean(confirmDeleteMsgId)}
+        title="Delete message?"
+        message="Are you sure you want to delete this message? It will be removed permanently."
+        confirmLabel="Delete Message"
+        variant="danger"
+        icon={Trash2}
+        onConfirm={() => {
+          if (confirmDeleteMsgId && onDeleteMessage) {
+            onDeleteMessage(confirmDeleteMsgId);
+          }
+          setConfirmDeleteMsgId(null);
+        }}
+        onClose={() => setConfirmDeleteMsgId(null)}
+      />
+
+      {/* Delete Entire Chat Confirmation UI Popup */}
       <ConfirmModal
         isOpen={showClearConfirm}
-        title="Clear chat history?"
+        title="Delete entire chat history?"
         message={
           <>
-            Are you sure you want to clear all messages with{' '}
+            Are you sure you want to delete all messages, photos, and shared files with{' '}
             <strong style={{ color: '#ffffff' }}>{selectedUser?.username}</strong>?
-            This will permanently remove the conversation from this session.
+            This action cannot be undone.
           </>
         }
-        confirmLabel="Clear Messages"
+        confirmLabel="Delete Chat"
         variant="danger"
         icon={Trash2}
         onConfirm={handleConfirmClear}

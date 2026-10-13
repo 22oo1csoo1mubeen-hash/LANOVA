@@ -25,8 +25,13 @@ const messageSchema = new mongoose.Schema(
       maxlength: [5000, 'Message cannot exceed 5000 characters'],
       validate: {
         validator: function (v) {
-          // If this message contains an image, text content/caption is optional
-          if (this.messageType === 'image' || this.imageUrl) {
+          // If this message contains an image or a shared file, text content/caption is optional
+          if (
+            this.messageType === 'image' ||
+            this.imageUrl ||
+            this.messageType === 'file' ||
+            this.fileUrl
+          ) {
             return true;
           }
           return typeof v === 'string' && v.trim().length > 0;
@@ -36,7 +41,7 @@ const messageSchema = new mongoose.Schema(
     },
     messageType: {
       type: String,
-      enum: ['text', 'image'],
+      enum: ['text', 'image', 'file'],
       default: 'text',
       index: true,
     },
@@ -48,6 +53,16 @@ const messageSchema = new mongoose.Schema(
       fileName: { type: String, default: null },
       fileSize: { type: Number, default: null },
       mimeType: { type: String, default: null },
+    },
+    fileUrl: {
+      type: String,
+      default: null,
+    },
+    fileMeta: {
+      fileName: { type: String, default: null },
+      fileSize: { type: Number, default: null },
+      mimeType: { type: String, default: null },
+      extension: { type: String, default: null },
     },
   },
   {
@@ -65,9 +80,13 @@ messageSchema.set('toJSON', {
     ret.id = ret._id.toString();
     ret.senderId = ret.sender.toString();
     ret.receiverId = ret.receiver.toString();
-    ret.messageType = ret.messageType || (ret.imageUrl ? 'image' : 'text');
+    ret.messageType =
+      ret.messageType ||
+      (ret.fileUrl ? 'file' : ret.imageUrl ? 'image' : 'text');
     ret.imageUrl = ret.imageUrl || null;
     ret.imageMeta = ret.imageMeta || null;
+    ret.fileUrl = ret.fileUrl || null;
+    ret.fileMeta = ret.fileMeta || null;
     delete ret._id;
     delete ret.sender;
     delete ret.receiver;

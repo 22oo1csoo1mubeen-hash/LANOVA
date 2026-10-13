@@ -59,7 +59,15 @@ export async function handleSocketMessage(ws, user, rawData) {
  */
 async function handleSendMessage(ws, sender, payload) {
   try {
-    const { receiverId, content, messageType = 'text', imageUrl, imageMeta } = payload || {};
+    const {
+      receiverId,
+      content,
+      messageType = 'text',
+      imageUrl,
+      imageMeta,
+      fileUrl,
+      fileMeta,
+    } = payload || {};
 
     // 1. Validate payload presence
     if (!receiverId || typeof receiverId !== 'string') {
@@ -86,11 +94,12 @@ async function handleSendMessage(ws, sender, payload) {
       });
     }
 
-    // 4. Validate message content and image
+    // 4. Validate message content, image, and file attachment
     const hasImage = Boolean(imageUrl && typeof imageUrl === 'string' && imageUrl.trim().length > 0);
+    const hasFile = Boolean(fileUrl && typeof fileUrl === 'string' && fileUrl.trim().length > 0);
     const trimmedContent = typeof content === 'string' ? content.trim() : '';
 
-    if (!hasImage && trimmedContent.length === 0) {
+    if (!hasImage && !hasFile && trimmedContent.length === 0) {
       return connectionManager.send(ws, {
         type: 'error',
         payload: { message: 'Message content cannot be empty' },
@@ -114,17 +123,30 @@ async function handleSendMessage(ws, sender, payload) {
     }
 
     // 6. Persist message in MongoDB FIRST (guarantee persistence before delivery attempt)
-    const isImage = hasImage || messageType === 'image';
+    let resolvedType = 'text';
+    if (hasFile || messageType === 'file') {
+      resolvedType = 'file';
+    } else if (hasImage || messageType === 'image') {
+      resolvedType = 'image';
+    }
+
     const savedMessage = await Message.create({
       sender: sender._id,
       receiver: receiverId,
       content: trimmedContent,
-      messageType: isImage ? 'image' : 'text',
+      messageType: resolvedType,
       imageUrl: hasImage ? imageUrl.trim() : null,
-      imageMeta: isImage && imageMeta ? {
+      imageMeta: hasImage && imageMeta ? {
         fileName: imageMeta.fileName || 'image',
         fileSize: Number(imageMeta.fileSize) || 0,
         mimeType: imageMeta.mimeType || 'image/png',
+      } : undefined,
+      fileUrl: hasFile ? fileUrl.trim() : null,
+      fileMeta: hasFile && fileMeta ? {
+        fileName: fileMeta.fileName || 'file',
+        fileSize: Number(fileMeta.fileSize) || 0,
+        mimeType: fileMeta.mimeType || 'application/octet-stream',
+        extension: fileMeta.extension || '',
       } : undefined,
     });
 
@@ -136,6 +158,8 @@ async function handleSendMessage(ws, sender, payload) {
       messageType: savedMessage.messageType,
       imageUrl: savedMessage.imageUrl,
       imageMeta: savedMessage.imageMeta,
+      fileUrl: savedMessage.fileUrl,
+      fileMeta: savedMessage.fileMeta,
       createdAt: savedMessage.createdAt.toISOString(),
     };
 

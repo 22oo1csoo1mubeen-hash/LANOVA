@@ -182,9 +182,13 @@ export function SocketProvider({ children }) {
       payload: {
         receiverId,
         content: typeof content === 'string' ? content : '',
-        messageType: extra?.messageType || (extra?.imageUrl ? 'image' : 'text'),
+        messageType:
+          extra?.messageType ||
+          (extra?.fileUrl ? 'file' : extra?.imageUrl ? 'image' : 'text'),
         imageUrl: extra?.imageUrl || null,
         imageMeta: extra?.imageMeta || null,
+        fileUrl: extra?.fileUrl || null,
+        fileMeta: extra?.fileMeta || null,
       },
     };
 

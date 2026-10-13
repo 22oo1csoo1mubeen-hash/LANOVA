@@ -194,7 +194,7 @@ export default function ChatUserList({
                           }}
                         >
                           <Trash2 size={14} />
-                          <span>Clear History</span>
+                          <span>Delete Chat</span>
                         </button>
                       )}
                     </div>
@@ -215,18 +215,18 @@ export default function ChatUserList({
         />
       )}
 
-      {/* Clear History Confirmation Modal */}
+      {/* Delete Chat Confirmation Modal */}
       <ConfirmModal
         isOpen={Boolean(confirmClearUser)}
-        title="Clear chat history?"
+        title="Delete chat history?"
         message={
           <>
-            Are you sure you want to clear all messages with{' '}
+            Are you sure you want to delete all messages and shared files with{' '}
             <strong style={{ color: '#ffffff' }}>{confirmClearUser?.username}</strong>?
-            This will permanently remove the conversation from this session.
+            This action cannot be undone.
           </>
         }
-        confirmLabel="Clear History"
+        confirmLabel="Delete Chat"
         variant="danger"
         icon={Trash2}
         onConfirm={() => {

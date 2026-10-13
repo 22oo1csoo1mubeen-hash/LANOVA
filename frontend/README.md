@@ -22,10 +22,14 @@ It features zero third-party cloud requirements, dynamic host IP detection, auto
 
 - **⚡ Blazing Fast HMR**: Powered by Vite 8 with ES modules and near-instant Hot Module Replacement.
 - **💬 Real-Time Messaging**: Built on native WebSockets with full duplex bidirectional updates and optimistic message delivery.
+- **📎 WhatsApp-Style File Sharing (Any Extension)**: Send documents, audio, videos, archives, and code files of **any extension** up to **100MB** directly over LAN with colored file type badges and direct download buttons.
+- **📸 High-Resolution Photo Sharing**: Share images with live upload progress, staging preview, captions, and responsive thumbnails with fullscreen modal viewing.
+- **🗑️ Real-Time Chat & Message Deletion**: "Delete Chat" clears the entire conversation history with real-time peer sync and disk media cleanup; single message deletion on hover with confirmation modals.
+- **💾 Uncapped Message History**: Displays complete chronological conversation history from MongoDB without artificial caps or missing messages.
 - **🟢 Live User Presence**: Real-time indicators showing online and offline states for all registered network peers.
 - **🔍 Dynamic LAN API Resolution**: Automatically resolves the backend server address (`http://<LAN_IP>:5000`) based on the client browser's current hostname—no manual IP reconfiguration needed when accessing from other phones or laptops on Wi-Fi!
 - **🌐 Network Monitor Dashboard**: Interactive telemetry page displaying host LAN IPv4 address, listening port, subnet mask, active peer counts, connection status badges, and 1-click shareable links.
-- **😀 Emoji Picker & Rich Interactions**: Built-in categorized emoji picker, user profile inspect modals, and conversation reset confirmation modals.
+- **😀 Emoji Picker & Rich Interactions**: Built-in categorized emoji picker, user profile inspect modals, and confirmation dialogs.
 - **🎨 Glassmorphic Dark UI**: Custom CSS design system with curated typography (Inter, Outfit, Space Grotesk), smooth micro-animations, and responsive layout.
 - **📱 Fully Mobile Responsive**: Seamlessly adapts between desktop split-view chat and mobile drawer view with dedicated back navigation.
 

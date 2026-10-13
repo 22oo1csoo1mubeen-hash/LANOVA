@@ -54,11 +54,14 @@ Built for computer networks demonstrations, office environments, campus dorms, a
 ## ✨ Key Features
 
 - **🚀 Real-Time Full-Duplex Chat**: Instant bidirectional messaging powered by native WebSockets (`ws`) with optimistic client UI updates.
+- **📎 WhatsApp-Style File Sharing (Any Extension)**: Share files and documents of **any extension** (`.pdf`, `.docx`, `.xlsx`, `.pptx`, `.zip`, `.rar`, `.mp3`, `.mp4`, `.apk`, code files, etc.) up to **100MB** over LAN with color-coded type badges and one-click direct downloads.
+- **📸 High-Resolution Photo Sharing**: Share images (PNG, JPG, GIF, WebP, SVG, BMP) with responsive thumbnails, captions, and an interactive fullscreen lightbox viewer.
+- **🗑️ Real-Time Chat & Message Deletion**: "Delete Chat" permanently clears full conversation history and syncs with peers in real-time, plus single message deletion on hover, with automatic cleanup of uploaded media from disk.
+- **💾 Unlimited Conversation History**: No artificial message cutoffs or caps; complete chronological conversations are stored in MongoDB and retrieved seamlessly.
 - **📶 Zero Cloud / 100% LAN First**: Functions completely offline inside your local subnet—no external SaaS, tracking, or cloud dependencies.
 - **🔍 Dynamic LAN IP & Subnet Discovery**: Automatically inspects network adapters using Node.js `os.networkInterfaces()`, identifies active physical IPv4 adapters, and displays server telemetry.
 - **📊 Real-Time Network Monitor Dashboard**: Dedicated dashboard displaying host IP, listening port, subnet mask, live peer count, connection state, and a one-click shareable LAN link.
 - **🔐 Secure Authentication**: User registration and login with `bcryptjs` password hashing and signed JSON Web Tokens (`jsonwebtoken`).
-- **💾 Message Persistence & History**: MongoDB storage via Mongoose schemas ensures messages are preserved, with full historical conversation retrieval.
 - **📬 Offline Messaging Support**: Send messages to offline users; messages are securely stored in MongoDB and retrieved immediately when they log in.
 - **🟢 Live User Presence**: Real-time `online`/`offline` status broadcasts via WebSocket events.
 - **🎨 Glassmorphic Dark UI**: Premium design built with modern CSS variables, subtle micro-animations, responsive layout, user profile modals, and integrated emoji picker.
@@ -76,14 +79,15 @@ LANOVA/
 │   ├── src/
 │   │   ├── config/           # Database configuration (MongoDB connection)
 │   │   ├── controllers/      # Route controllers (auth, user, message, network)
-│   │   ├── middleware/       # JWT auth verification, error handlers
-│   │   ├── models/           # Mongoose data models (User, Message)
+│   │   ├── middleware/       # JWT auth verification, multer image & file upload, error handlers
+│   │   ├── models/           # Mongoose data models (User, Message with file/image metadata)
 │   │   ├── routes/           # Express REST endpoints
 │   │   ├── sockets/          # WebSocket server, connection manager & event handlers
 │   │   ├── utils/            # LAN IP discovery, token generation
-│   │   ├── app.js            # Express app configuration & middleware pipeline
+│   │   ├── app.js            # Express app configuration & static /uploads serving
 │   │   └── server.js         # HTTP + WebSocket server initialization & lifecycle
-│   ├── tests/                # Automated test suites (auth, chat, network)
+│   ├── uploads/              # Local disk storage for shared photos and files
+│   ├── tests/                # Automated test suites (auth, chat, network, image, files)
 │   ├── .env.example          # Environment variables template
 │   ├── package.json          # Backend dependencies and test scripts
 │   └── README.md             # Backend detailed documentation
@@ -260,7 +264,11 @@ To chat between different computers or smartphones connected to the same Wi-Fi:
 | `POST` | `/api/auth/login` | No | Authenticate user & receive signed JWT |
 | `GET` | `/api/auth/me` | Yes (`Bearer`) | Retrieve current user profile |
 | `GET` | `/api/users` | Yes (`Bearer`) | List all registered users (excluding caller) |
-| `GET` | `/api/messages/:userId` | Yes (`Bearer`) | Get conversation history with specific user |
+| `GET` | `/api/messages/:userId` | Yes (`Bearer`) | Get complete conversation history with specific user (no cutoff) |
+| `POST` | `/api/messages/upload` | Yes (`Bearer`) | Upload image (PNG, JPG, GIF, WebP, SVG, BMP up to 15MB) with optional caption |
+| `POST` | `/api/messages/upload-file` | Yes (`Bearer`) | Upload generic file of **any extension** up to 100MB with optional caption |
+| `DELETE` | `/api/messages/:userId` | Yes (`Bearer`) | Clear entire chat with user, real-time sync with peer, and disk cleanup |
+| `DELETE` | `/api/messages/item/:messageId`| Yes (`Bearer`) | Delete individual message on hover, real-time sync with peer, and media disk cleanup |
 | `GET` | `/api/network/info` | Yes (`Bearer`) | Retrieve host LAN IP, subnet, ports, and telemetry |
 
 ### WebSocket Endpoint (`/ws`)
@@ -269,10 +277,12 @@ Connect at: `ws://<HOST_IP>:5000/ws?token=<JWT_TOKEN>`
 
 | Direction | Event Name | Payload Structure | Description |
 | :--- | :--- | :--- | :--- |
-| **Client ➔ Server** | `message:send` | `{ receiverId, content }` | Send a private message |
+| **Client ➔ Server** | `message:send` | `{ receiverId, content, messageType, imageUrl, fileUrl, fileMeta }` | Send a private message (text, image, or generic file) |
 | **Client ➔ Server** | `users:online` | `{}` | Request list of currently online user IDs |
-| **Server ➔ Client** | `message:sent` | `{ id, senderId, receiverId, content, createdAt }` | Confirmation that message was stored in MongoDB |
-| **Server ➔ Client** | `message:received`| `{ id, senderId, receiverId, content, createdAt }` | Real-time incoming message delivered to recipient |
+| **Server ➔ Client** | `message:sent` | `{ id, senderId, receiverId, content, messageType, imageUrl, fileUrl, fileMeta, createdAt }` | Confirmation that message was stored in MongoDB |
+| **Server ➔ Client** | `message:received`| `{ id, senderId, receiverId, content, messageType, imageUrl, fileUrl, fileMeta, createdAt }` | Real-time incoming message delivered to recipient |
+| **Server ➔ Client** | `conversation:cleared` | `{ peerId }` | Real-time broadcast notifying peer that chat history was deleted |
+| **Server ➔ Client** | `message:deleted` | `{ messageId, peerId }` | Real-time broadcast notifying peer that a single message was deleted |
 | **Server ➔ Client** | `user:status` | `{ userId, status: "online" \| "offline" }` | Presence change broadcast |
 | **Server ➔ Client** | `users:online` | `{ onlineUserIds: [...] }` | Initial list of active user IDs upon connect |
 | **Server ➔ Client** | `error` | `{ message: "..." }` | Error notifications (auth failures, malformed payloads) |
@@ -281,18 +291,20 @@ Connect at: `ws://<HOST_IP>:5000/ws?token=<JWT_TOKEN>`
 
 ## 🧪 Testing & Verification
 
-The backend includes a comprehensive automated test suite covering all modules:
+The backend includes a comprehensive automated test suite with **137 passing tests across 5 test suites**:
 
 ```bash
 cd backend
 
-# Run the complete test suite (Auth, Chat & WebSocket, Network Telemetry)
+# Run the complete test suite (Auth, Chat & WebSocket, Network, Images, Files & Deletions)
 npm run test:all
 
 # Run individual suites
 npm run test           # Authentication & User Management (Milestone 1)
 npm run test:chat      # Real-time WebSocket Messaging & Persistence (Milestone 2)
 npm run test:network   # LAN IP Detection & Telemetry (Milestone 3)
+npm run test:image     # Image uploads, lightbox support & media disk cleanup
+npm run test:files     # WhatsApp-style file sharing (any extension), unlimited pagination & chat/message deletion
 ```
 
 > [!NOTE]
