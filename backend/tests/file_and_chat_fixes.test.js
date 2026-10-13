@@ -173,9 +173,18 @@ async function runTests() {
     assert(pdfData.fileMeta?.fileName === 'project_report.pdf', 'fileMeta retains original PDF filename');
     assert(pdfData.fileMeta?.extension === '.pdf', 'fileMeta includes .pdf extension');
 
-    // Test static download of the uploaded PDF
+    // Test static view (inline open) of the uploaded PDF
     const staticPdfRes = await fetch(`${BASE_URL}${pdfData.fileUrl}`);
     assert(staticPdfRes.status === 200, 'Uploaded PDF is statically retrievable via HTTP');
+    const inlineDisp = staticPdfRes.headers.get('content-disposition') || '';
+    assert(!inlineDisp.includes('attachment'), 'Inline view does not force attachment download');
+
+    // Test direct local download of the uploaded PDF with ?download=1
+    const downloadPdfRes = await fetch(`${BASE_URL}${pdfData.fileUrl}?download=1&name=project_report.pdf`);
+    assert(downloadPdfRes.status === 200, 'Download endpoint returns HTTP 200');
+    const attachDisp = downloadPdfRes.headers.get('content-disposition') || '';
+    assert(attachDisp.includes('attachment'), 'Download endpoint returns Content-Disposition: attachment');
+    assert(attachDisp.includes('project_report.pdf'), 'Download header includes original filename');
 
     // Test ZIP file upload
     const dummyZipContent = Buffer.from('PK\x03\x04 dummy zip archive');

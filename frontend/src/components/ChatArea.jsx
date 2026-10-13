@@ -370,16 +370,44 @@ export default function ChatArea({
     [clearStagedImage]
   );
 
-  const handleDownloadFile = useCallback((url, fileName) => {
+  // Download file locally to user's device
+  const handleDownloadFile = useCallback(async (url, fileName) => {
     if (!url) return;
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName || 'download';
-    a.target = '_blank';
-    a.rel = 'noreferrer';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const downloadName = fileName || 'download';
+    try {
+      // Append download=1 query parameters to signal attachment download to server
+      const sep = url.includes('?') ? '&' : '?';
+      const downloadParamUrl = `${url}${sep}download=1&name=${encodeURIComponent(downloadName)}`;
+
+      const response = await fetch(downloadParamUrl);
+      if (!response.ok) throw new Error(`HTTP status ${response.status}`);
+      const blob = await response.blob();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = downloadName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => window.URL.revokeObjectURL(objectUrl), 2000);
+    } catch (err) {
+      console.warn('Direct blob download failed, falling back to download link:', err);
+      // Fallback: trigger download via attachment endpoint / link
+      const sep = url.includes('?') ? '&' : '?';
+      const downloadParamUrl = `${url}${sep}download=1&name=${encodeURIComponent(downloadName)}`;
+      const a = document.createElement('a');
+      a.href = downloadParamUrl;
+      a.download = downloadName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+  }, []);
+
+  // Open file in browser tab for viewing
+  const handleOpenFile = useCallback((url) => {
+    if (!url) return;
+    window.open(url, '_blank', 'noopener,noreferrer');
   }, []);
 
   // Handle attachment file selection (routes images to stageImageFile and all other extensions to stageGenericFile)
@@ -875,13 +903,16 @@ export default function ChatArea({
                         <div className="bubble-file-card-wrap">
                           <div
                             className="bubble-file-card"
-                            onClick={() =>
-                              handleDownloadFile(
-                                resolvedFileUrl,
-                                msg.fileMeta?.fileName || 'file'
-                              )
-                            }
-                            title={`Download ${msg.fileMeta?.fileName || 'file'}`}
+                            onClick={() => handleOpenFile(resolvedFileUrl)}
+                            title={`Open ${msg.fileMeta?.fileName || 'file'}`}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault();
+                                handleOpenFile(resolvedFileUrl);
+                              }
+                            }}
                           >
                             <div
                               className="file-card-icon-badge"
@@ -915,9 +946,8 @@ export default function ChatArea({
                                 </span>
                               </div>
                             </div>
-                            <a
-                              href={resolvedFileUrl}
-                              download={msg.fileMeta?.fileName || 'file'}
+                            <button
+                              type="button"
                               className="file-card-download-btn"
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -926,10 +956,11 @@ export default function ChatArea({
                                   msg.fileMeta?.fileName || 'file'
                                 );
                               }}
-                              title="Download file"
+                              title={`Download ${msg.fileMeta?.fileName || 'file'}`}
+                              aria-label={`Download ${msg.fileMeta?.fileName || 'file'}`}
                             >
                               <Download size={15} strokeWidth={2.2} />
-                            </a>
+                            </button>
                           </div>
                         </div>
                       )}
@@ -1167,17 +1198,20 @@ export default function ChatArea({
                 </span>
               </div>
               <div className="lightbox-actions">
-                <a
-                  href={activeLightboxImage.url}
-                  download={activeLightboxImage.fileName}
-                  target="_blank"
-                  rel="noreferrer"
+                <button
+                  type="button"
                   className="lightbox-action-btn"
+                  onClick={() =>
+                    handleDownloadFile(
+                      activeLightboxImage.url,
+                      activeLightboxImage.fileName
+                    )
+                  }
                   title="Download image"
                 >
                   <Download size={15} />
                   <span>Download</span>
-                </a>
+                </button>
                 <button
                   type="button"
                   className="lightbox-close-btn"

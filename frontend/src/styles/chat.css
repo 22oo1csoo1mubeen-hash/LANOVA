@@ -2685,6 +2685,8 @@
   transition: all 0.2s ease;
   flex-shrink: 0;
   text-decoration: none;
+  padding: 0;
+  outline: none;
 }
 
 .bubble-sent .file-card-download-btn {

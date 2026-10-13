@@ -67,7 +67,21 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve uploaded media files statically
+// Serve uploaded media files - support direct file download via ?download=1 query param
+app.get('/uploads/:filename', (req, res, next) => {
+  if (req.query.download === '1' || req.query.download === 'true') {
+    const filename = path.basename(req.params.filename);
+    const filePath = path.join(uploadsDir, filename);
+
+    if (fs.existsSync(filePath)) {
+      const downloadName = req.query.name ? path.basename(req.query.name) : filename;
+      return res.download(filePath, downloadName);
+    }
+  }
+  next();
+});
+
+// Serve uploaded media files statically (for inline viewing in browser)
 app.use('/uploads', express.static(uploadsDir));
 
 // Health check endpoint
