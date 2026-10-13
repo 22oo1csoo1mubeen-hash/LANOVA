@@ -4,6 +4,7 @@ import { Message } from '../models/Message.js';
 import { User } from '../models/User.js';
 import { deleteUploadedFile } from '../middleware/uploadMiddleware.js';
 import { connectionManager } from '../sockets/connectionManager.js';
+import { saveFileToGridFS } from '../utils/gridfs.js';
 
 /**
  * Message Controller — LANOVA
@@ -67,6 +68,9 @@ export async function uploadImage(req, res, next) {
 
     const relativeUrl = `/uploads/${req.file.filename}`;
 
+    // Persist to MongoDB GridFS for permanence across container rebuilds/restarts (e.g. Render)
+    saveFileToGridFS(req.file.filename, req.file.path, req.file.mimetype).catch(() => {});
+
     return res.status(201).json({
       success: true,
       imageUrl: relativeUrl,
@@ -93,6 +97,9 @@ export async function uploadFile(req, res, next) {
 
     const relativeUrl = `/uploads/${req.file.filename}`;
     const ext = path.extname(req.file.originalname).toLowerCase();
+
+    // Persist to MongoDB GridFS for permanence across container rebuilds/restarts (e.g. Render)
+    saveFileToGridFS(req.file.filename, req.file.path, req.file.mimetype).catch(() => {});
 
     return res.status(201).json({
       success: true,

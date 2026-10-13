@@ -12,7 +12,8 @@
     "test:network": "node tests/network.test.js",
     "test:image": "node tests/image.test.js",
     "test:files": "node tests/file_and_chat_fixes.test.js",
-    "test:all": "node tests/auth.test.js && node tests/chat.test.js && node tests/network.test.js && node tests/image.test.js && node tests/file_and_chat_fixes.test.js"
+    "test:gridfs": "node tests/gridfs_persistence.test.js",
+    "test:all": "node tests/auth.test.js && node tests/chat.test.js && node tests/network.test.js && node tests/image.test.js && node tests/file_and_chat_fixes.test.js && node tests/gridfs_persistence.test.js"
   },
   "keywords": [
     "lanova",

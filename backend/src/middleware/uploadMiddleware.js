@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
+import { deleteFileFromGridFS } from '../utils/gridfs.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -148,6 +149,7 @@ export function deleteUploadedFile(relativeUrl) {
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
     }
+    deleteFileFromGridFS(fileName).catch(() => {});
   } catch (err) {
     console.warn(`[File Cleanup] Could not delete file ${relativeUrl}:`, err.message);
   }

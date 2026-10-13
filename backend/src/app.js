@@ -10,6 +10,7 @@ import messageRoutes from './routes/messageRoutes.js';
 import networkRoutes from './routes/networkRoutes.js';
 import { getHealth } from './controllers/networkController.js';
 import { notFoundHandler, errorHandler } from './middleware/errorMiddleware.js';
+import { getGridFSBucket } from './utils/gridfs.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -67,17 +68,55 @@ app.use(
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Serve uploaded media files - support direct file download via ?download=1 query param
-app.get('/uploads/:filename', (req, res, next) => {
-  if (req.query.download === '1' || req.query.download === 'true') {
-    const filename = path.basename(req.params.filename);
-    const filePath = path.join(uploadsDir, filename);
+// Serve uploaded media files - with disk + MongoDB GridFS fallback and ?download=1 support
+app.get('/uploads/:filename', async (req, res, next) => {
+  const filename = path.basename(req.params.filename);
+  const filePath = path.join(uploadsDir, filename);
+  const isDownload = req.query.download === '1' || req.query.download === 'true';
+  const downloadName = req.query.name ? path.basename(req.query.name) : filename;
 
-    if (fs.existsSync(filePath)) {
-      const downloadName = req.query.name ? path.basename(req.query.name) : filename;
+  // 1. If present on disk, serve or download directly
+  if (fs.existsSync(filePath)) {
+    if (isDownload) {
       return res.download(filePath, downloadName);
     }
+    return next(); // Let express.static handle inline serving
   }
+
+  // 2. If not on local disk (e.g. Render restart/redeploy wiped ephemeral disk), stream from MongoDB GridFS
+  try {
+    const gfs = getGridFSBucket();
+    if (gfs) {
+      const files = await gfs.find({ filename }).toArray();
+      if (files.length > 0) {
+        const fileDoc = files[0];
+        if (isDownload) {
+          res.setHeader(
+            'Content-Disposition',
+            `attachment; filename="${encodeURIComponent(downloadName)}"`
+          );
+        } else {
+          res.setHeader('Content-Disposition', 'inline');
+        }
+        if (fileDoc.contentType) {
+          res.setHeader('Content-Type', fileDoc.contentType);
+        }
+        res.setHeader('Content-Length', fileDoc.length);
+
+        // Re-cache to local disk in background
+        const downloadStream = gfs.openDownloadStreamByName(filename);
+        const diskCacheStream = fs.createWriteStream(filePath);
+        downloadStream.pipe(diskCacheStream).on('error', () => {});
+
+        // Stream file content directly to client response
+        const clientStream = gfs.openDownloadStreamByName(filename);
+        return clientStream.pipe(res);
+      }
+    }
+  } catch (err) {
+    console.warn(`[Upload Stream] Error reading ${filename} from GridFS:`, err.message);
+  }
+
   next();
 });
 

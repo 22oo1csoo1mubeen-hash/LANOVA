@@ -380,7 +380,13 @@ export default function ChatArea({
       const downloadParamUrl = `${url}${sep}download=1&name=${encodeURIComponent(downloadName)}`;
 
       const response = await fetch(downloadParamUrl);
-      if (!response.ok) throw new Error(`HTTP status ${response.status}`);
+      if (!response.ok) {
+        if (response.status === 404) {
+          alert('This file is no longer available on the server (it may have expired or been removed).');
+          return;
+        }
+        throw new Error(`Server returned HTTP ${response.status}`);
+      }
       const blob = await response.blob();
       const objectUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -391,22 +397,23 @@ export default function ChatArea({
       document.body.removeChild(a);
       setTimeout(() => window.URL.revokeObjectURL(objectUrl), 2000);
     } catch (err) {
-      console.warn('Direct blob download failed, falling back to download link:', err);
-      // Fallback: trigger download via attachment endpoint / link
-      const sep = url.includes('?') ? '&' : '?';
-      const downloadParamUrl = `${url}${sep}download=1&name=${encodeURIComponent(downloadName)}`;
-      const a = document.createElement('a');
-      a.href = downloadParamUrl;
-      a.download = downloadName;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
+      console.warn('Download error:', err);
+      alert('Unable to download file. Please check your network connection or try again.');
     }
   }, []);
 
   // Open file in browser tab for viewing
-  const handleOpenFile = useCallback((url) => {
+  const handleOpenFile = useCallback(async (url) => {
     if (!url) return;
+    try {
+      const response = await fetch(url, { method: 'HEAD' });
+      if (response.status === 404) {
+        alert('This file is no longer available on the server (it may have expired or been removed).');
+        return;
+      }
+    } catch {
+      // If HEAD check fails (e.g. offline/CORS), proceed to attempt opening
+    }
     window.open(url, '_blank', 'noopener,noreferrer');
   }, []);
 
