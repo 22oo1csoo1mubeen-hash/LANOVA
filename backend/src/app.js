@@ -40,14 +40,18 @@ app.use(
       // Allow requests with no origin (curl, Postman, server-to-server)
       if (!origin) return callback(null, true);
 
-      // Check configured origins or local development origins
+      // Check configured origins, local development, or cloud deployment domains
       const isAllowed =
+        clientUrls.includes('*') ||
         clientUrls.includes(origin) ||
         origin.startsWith('http://localhost:') ||
         origin.startsWith('http://127.0.0.1:') ||
         origin.startsWith('http://192.168.') ||
         origin.startsWith('http://10.') ||
-        origin.startsWith('http://172.');
+        origin.startsWith('http://172.') ||
+        origin.endsWith('.vercel.app') ||
+        origin.endsWith('.onrender.com') ||
+        origin.endsWith('.netlify.app');
 
       if (isAllowed) {
         callback(null, true);
