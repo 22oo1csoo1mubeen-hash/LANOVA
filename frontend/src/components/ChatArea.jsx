@@ -910,7 +910,13 @@ export default function ChatArea({
                         <div className="bubble-file-card-wrap">
                           <div
                             className="bubble-file-card"
-                            onClick={() => handleOpenFile(resolvedFileUrl)}
+                            onClick={(e) => {
+                              // If tapped or clicked on download button, do not open file
+                              if (e.target.closest('.file-card-download-btn')) {
+                                return;
+                              }
+                              handleOpenFile(resolvedFileUrl);
+                            }}
                             title={`Open ${msg.fileMeta?.fileName || 'file'}`}
                             role="button"
                             tabIndex={0}
@@ -953,21 +959,24 @@ export default function ChatArea({
                                 </span>
                               </div>
                             </div>
-                            <button
-                              type="button"
+                            <a
+                              href={`${resolvedFileUrl}${resolvedFileUrl.includes('?') ? '&' : '?'}download=1&name=${encodeURIComponent(msg.fileMeta?.fileName || 'file')}`}
+                              download={msg.fileMeta?.fileName || 'file'}
                               className="file-card-download-btn"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleDownloadFile(
-                                  resolvedFileUrl,
-                                  msg.fileMeta?.fileName || 'file'
-                                );
+                              }}
+                              onTouchStart={(e) => {
+                                e.stopPropagation();
+                              }}
+                              onTouchEnd={(e) => {
+                                e.stopPropagation();
                               }}
                               title={`Download ${msg.fileMeta?.fileName || 'file'}`}
                               aria-label={`Download ${msg.fileMeta?.fileName || 'file'}`}
                             >
                               <Download size={15} strokeWidth={2.2} />
-                            </button>
+                            </a>
                           </div>
                         </div>
                       )}
@@ -1205,20 +1214,15 @@ export default function ChatArea({
                 </span>
               </div>
               <div className="lightbox-actions">
-                <button
-                  type="button"
+                <a
+                  href={`${activeLightboxImage.url}${activeLightboxImage.url.includes('?') ? '&' : '?'}download=1&name=${encodeURIComponent(activeLightboxImage.fileName || 'image.png')}`}
+                  download={activeLightboxImage.fileName || 'image.png'}
                   className="lightbox-action-btn"
-                  onClick={() =>
-                    handleDownloadFile(
-                      activeLightboxImage.url,
-                      activeLightboxImage.fileName
-                    )
-                  }
                   title="Download image"
                 >
                   <Download size={15} />
                   <span>Download</span>
-                </button>
+                </a>
                 <button
                   type="button"
                   className="lightbox-close-btn"

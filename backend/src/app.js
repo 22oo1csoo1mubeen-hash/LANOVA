@@ -75,10 +75,18 @@ app.get('/uploads/:filename', async (req, res, next) => {
   const isDownload = req.query.download === '1' || req.query.download === 'true';
   const downloadName = req.query.name ? path.basename(req.query.name) : filename;
 
+  const safeAsciiName = downloadName.replace(/["\\]/g, '_').replace(/[^\x20-\x7E]/g, '_');
+  const encodedName = encodeURIComponent(downloadName);
+
   // 1. If present on disk, serve or download directly
   if (fs.existsSync(filePath)) {
     if (isDownload) {
-      return res.download(filePath, downloadName);
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${safeAsciiName}"; filename*=UTF-8''${encodedName}`
+      );
+      return res.sendFile(filePath);
     }
     return next(); // Let express.static handle inline serving
   }
@@ -91,15 +99,16 @@ app.get('/uploads/:filename', async (req, res, next) => {
       if (files.length > 0) {
         const fileDoc = files[0];
         if (isDownload) {
+          res.setHeader('Content-Type', 'application/octet-stream');
           res.setHeader(
             'Content-Disposition',
-            `attachment; filename="${encodeURIComponent(downloadName)}"`
+            `attachment; filename="${safeAsciiName}"; filename*=UTF-8''${encodedName}`
           );
         } else {
           res.setHeader('Content-Disposition', 'inline');
-        }
-        if (fileDoc.contentType) {
-          res.setHeader('Content-Type', fileDoc.contentType);
+          if (fileDoc.contentType) {
+            res.setHeader('Content-Type', fileDoc.contentType);
+          }
         }
         res.setHeader('Content-Length', fileDoc.length);
 
