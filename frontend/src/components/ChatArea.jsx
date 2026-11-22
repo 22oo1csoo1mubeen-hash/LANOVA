@@ -236,6 +236,7 @@ export default function ChatArea({
   const [isWallpaperUpdating, setIsWallpaperUpdating] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [activeMessageActionsId, setActiveMessageActionsId] = useState(null);
+  const [messageActionsPosition, setMessageActionsPosition] = useState(null);
   const [replyToMessage, setReplyToMessage] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
   const messagesContainerRef = useRef(null);
@@ -461,39 +462,83 @@ export default function ChatArea({
     setShowMoreMenu(false);
   };
 
-  const handleMessageTouchStart = (event, msg) => {
-    if (msg.id.startsWith('temp_') || event.target.closest('a, button')) return;
-    const touch = event.touches[0];
-    touchStartRef.current = { x: touch.clientX, y: touch.clientY, message: msg };
+  const getMessageActionsPosition = (rect, isMe) => {
+    const viewportWidth = document.documentElement.clientWidth;
+    const viewportHeight = document.documentElement.clientHeight;
+    const menuWidth = Math.min(250, viewportWidth - 16);
+    const menuHeight = 90;
+    const preferredLeft = isMe ? rect.right - menuWidth : rect.left;
+    const left = Math.max(8, Math.min(preferredLeft, viewportWidth - menuWidth - 8));
+    const top =
+      rect.top >= menuHeight + 16
+        ? rect.top - menuHeight - 8
+        : Math.min(rect.bottom + 8, viewportHeight - menuHeight - 8);
+    return { left, top };
+  };
+
+  const handleMessagePointerDown = (event, msg) => {
+    if (
+      msg.id.startsWith('temp_') ||
+      event.pointerType === 'mouse' ||
+      event.target.closest('button, [role="button"], .message-context-menu')
+    ) {
+      return;
+    }
+
+    touchStartRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      pointerId: event.pointerId,
+      message: msg,
+      rect: event.currentTarget.getBoundingClientRect(),
+      isMe: msg.sender === 'me',
+    };
+    const pointerId = event.pointerId;
     didLongPressRef.current = false;
     clearTimeout(longPressTimerRef.current);
     longPressTimerRef.current = setTimeout(() => {
+      if (touchStartRef.current?.pointerId !== pointerId) return;
       didLongPressRef.current = true;
       setActiveMessageActionsId(msg.id);
+      setMessageActionsPosition(
+        getMessageActionsPosition(touchStartRef.current.rect, touchStartRef.current.isMe)
+      );
       if (navigator.vibrate) navigator.vibrate(25);
     }, 500);
   };
 
-  const handleMessageTouchMove = (event) => {
-    if (!touchStartRef.current) return;
-    const touch = event.touches[0];
+  const handleMessagePointerMove = (event) => {
+    if (!touchStartRef.current || event.pointerId !== touchStartRef.current.pointerId) return;
     const distance = Math.hypot(
-      touch.clientX - touchStartRef.current.x,
-      touch.clientY - touchStartRef.current.y
+      event.clientX - touchStartRef.current.x,
+      event.clientY - touchStartRef.current.y
     );
-    if (distance > 12) clearTimeout(longPressTimerRef.current);
+    if (distance > 20) clearTimeout(longPressTimerRef.current);
   };
 
-  const handleMessageTouchEnd = (event) => {
+  const handleMessagePointerUp = (event) => {
     clearTimeout(longPressTimerRef.current);
-    if (!touchStartRef.current) return;
-    const touch = event.changedTouches[0];
-    const deltaX = touch.clientX - touchStartRef.current.x;
-    const deltaY = touch.clientY - touchStartRef.current.y;
-    if (!didLongPressRef.current && Math.abs(deltaX) > 60 && Math.abs(deltaX) > Math.abs(deltaY)) {
-      handleReplyToMessage(touchStartRef.current.message);
+    if (!touchStartRef.current || event.pointerId !== touchStartRef.current.pointerId) return;
+    const start = touchStartRef.current;
+    const deltaX = event.clientX - start.x;
+    const deltaY = event.clientY - start.y;
+    if (!didLongPressRef.current && deltaX > 55 && deltaX > Math.abs(deltaY) * 1.2) {
+      didLongPressRef.current = true;
+      handleReplyToMessage(start.message);
     }
     touchStartRef.current = null;
+    if (didLongPressRef.current) {
+      setTimeout(() => {
+        didLongPressRef.current = false;
+      }, 0);
+    }
+  };
+
+  const handleMessagePointerCancel = (event) => {
+    if (!touchStartRef.current || event.pointerId !== touchStartRef.current.pointerId) return;
+    clearTimeout(longPressTimerRef.current);
+    touchStartRef.current = null;
+    didLongPressRef.current = false;
   };
 
   const formatFileSize = (bytes) => {
@@ -1168,6 +1213,7 @@ export default function ChatArea({
             type="file"
             accept="image/*"
             hidden
+            aria-label="Choose shared chat wallpaper"
             onChange={handleWallpaperSelected}
           />
         </div>
@@ -1235,6 +1281,9 @@ export default function ChatArea({
           className="chat-messages-container"
           ref={messagesContainerRef}
           onScroll={handleScroll}
+          onPointerMove={handleMessagePointerMove}
+          onPointerUp={handleMessagePointerUp}
+          onPointerCancel={handleMessagePointerCancel}
           onClick={(event) => {
             if (event.target.closest('.message-context-menu')) return;
             if (didLongPressRef.current) {
@@ -1332,13 +1381,23 @@ export default function ChatArea({
                         isActiveMatch ? ' active-match' : isMatched ? ' search-match' : ''
                       }${hasImage ? ' has-image' : ''}${hasFile ? ' has-file' : ''}`}
                       onContextMenu={(event) => {
-                        if (msg.id.startsWith('temp_') || event.target.closest('a')) return;
+                        if (msg.id.startsWith('temp_')) return;
                         event.preventDefault();
                         setActiveMessageActionsId(msg.id);
+                        setMessageActionsPosition(
+                          getMessageActionsPosition(
+                            event.currentTarget.getBoundingClientRect(),
+                            isMe
+                          )
+                        );
                       }}
-                      onTouchStart={(event) => handleMessageTouchStart(event, msg)}
-                      onTouchMove={handleMessageTouchMove}
-                      onTouchEnd={handleMessageTouchEnd}
+                      onPointerDown={(event) => handleMessagePointerDown(event, msg)}
+                      onClick={(event) => {
+                        if (!didLongPressRef.current) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        didLongPressRef.current = false;
+                      }}
                     >
                       {msg.replyTo?.messageId && (
                         <button
@@ -1548,6 +1607,14 @@ export default function ChatArea({
                       <div
                         className={`message-context-menu ${isMe ? 'sent-context-menu' : ''}`}
                         role="menu"
+                        style={
+                          messageActionsPosition
+                            ? {
+                                left: `${messageActionsPosition.left}px`,
+                                top: `${messageActionsPosition.top}px`,
+                              }
+                            : undefined
+                        }
                         onClick={(event) => {
                           event.stopPropagation();
                           didLongPressRef.current = false;
