@@ -15,6 +15,7 @@ export function getWebSocketUrl(token) {
 export function SocketProvider({ children }) {
   const { token, user } = useAuth();
   const [isConnected, setIsConnected] = useState(false);
+  const [connectionVersion, setConnectionVersion] = useState(0);
   const [onlineUserIds, setOnlineUserIds] = useState(new Set());
 
   const socketRef = useRef(null);
@@ -45,6 +46,7 @@ export function SocketProvider({ children }) {
 
       ws.onopen = () => {
         setIsConnected(true);
+        setConnectionVersion((version) => version + 1);
         console.log('[LANOVA WebSocket] Connected to real-time messaging server');
       };
 
@@ -232,6 +234,7 @@ export function SocketProvider({ children }) {
     <SocketContext.Provider
       value={{
         isConnected,
+        connectionVersion,
         onlineUserIds,
         isUserOnline,
         sendMessage,

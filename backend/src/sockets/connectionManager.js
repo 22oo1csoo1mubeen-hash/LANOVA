@@ -114,6 +114,15 @@ class ConnectionManager {
     }
   }
 
+  sendToUserExcept(userId, excludedSocket, event) {
+    const data = JSON.stringify(event);
+    for (const ws of this.getSockets(userId)) {
+      if (ws !== excludedSocket && ws.readyState === WebSocket.OPEN) {
+        ws.send(data);
+      }
+    }
+  }
+
   /**
    * Broadcast an event to all connected users, optionally excluding a user.
    * @param {object} event

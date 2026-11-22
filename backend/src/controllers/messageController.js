@@ -7,6 +7,9 @@ import { deleteUploadedFile } from '../middleware/uploadMiddleware.js';
 import { connectionManager } from '../sockets/connectionManager.js';
 import { saveFileToGridFS } from '../utils/gridfs.js';
 
+const REACTION_EMOJI_PATTERN =
+  /^(?:\p{Extended_Pictographic}(?:\uFE0F)?(?:\p{Emoji_Modifier})?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F)?(?:\p{Emoji_Modifier})?)*|\p{Regional_Indicator}{2}|[0-9#*]\uFE0F?\u20E3)$/u;
+
 /**
  * Message Controller — LANOVA
  * Handles REST conversation history retrieval, file/image uploads,
@@ -495,8 +498,11 @@ export async function toggleMessageReaction(req, res, next) {
     }
 
     const { emoji } = req.body || {};
-    const allowedEmojis = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
-    if (!allowedEmojis.includes(emoji)) {
+    if (
+      typeof emoji !== 'string' ||
+      emoji.length > 32 ||
+      !REACTION_EMOJI_PATTERN.test(emoji)
+    ) {
       return res.status(400).json({ message: 'Unsupported reaction' });
     }
 

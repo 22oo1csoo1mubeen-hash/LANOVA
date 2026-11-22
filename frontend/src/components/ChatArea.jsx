@@ -29,6 +29,7 @@ import {
   Reply,
   Pencil,
   Check,
+  Plus,
 } from 'lucide-react';
 import Avatar from './Avatar';
 import EmojiPicker from './EmojiPicker';
@@ -141,6 +142,9 @@ function getMessageDateKey(dateStr) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+const DEFAULT_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '🫂', '🥹'];
+const RECENT_REACTION_LIMIT = 4;
+
 function renderLinkedText(text) {
   const linkPattern =
     /https?:\/\/[^\s<]+|www\.[^\s<]+|(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<]*)?/gi;
@@ -237,11 +241,29 @@ export default function ChatArea({
   const [isMuted, setIsMuted] = useState(false);
   const [activeMessageActionsId, setActiveMessageActionsId] = useState(null);
   const [messageActionsPosition, setMessageActionsPosition] = useState(null);
+  const [recentReactionEmojis, setRecentReactionEmojis] = useState(() => {
+    if (!currentUserId || typeof window === 'undefined') return [];
+    try {
+      const stored = window.localStorage.getItem(`lanova-recent-reactions:${currentUserId}`);
+      const parsed = stored ? JSON.parse(stored) : [];
+      return Array.isArray(parsed)
+        ? [...new Set(parsed.filter((emoji) => typeof emoji === 'string'))].slice(
+            0,
+            RECENT_REACTION_LIMIT
+          )
+        : [];
+    } catch (error) {
+      console.warn('[ChatArea] Could not load recent reactions:', error);
+      return [];
+    }
+  });
+  const [reactionPickerMessageId, setReactionPickerMessageId] = useState(null);
   const [replyToMessage, setReplyToMessage] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
   const messagesContainerRef = useRef(null);
   const inputRef = useRef(null);
   const emojiButtonRef = useRef(null);
+  const reactionPickerTriggerRef = useRef(null);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
   const wallpaperInputRef = useRef(null);
@@ -270,6 +292,33 @@ export default function ChatArea({
 
   useEffect(() => () => clearTimeout(longPressTimerRef.current), []);
   useEffect(() => () => stopTyping(), [stopTyping]);
+
+  const displayedReactionEmojis = useMemo(
+    () => [...new Set([...recentReactionEmojis, ...DEFAULT_REACTION_EMOJIS])],
+    [recentReactionEmojis]
+  );
+
+  const selectMessageReaction = (messageId, emoji) => {
+    const updatedRecent = [
+      emoji,
+      ...recentReactionEmojis.filter((recentEmoji) => recentEmoji !== emoji),
+    ].slice(0, RECENT_REACTION_LIMIT);
+    setRecentReactionEmojis(updatedRecent);
+    try {
+      if (currentUserId) {
+        window.localStorage.setItem(
+          `lanova-recent-reactions:${currentUserId}`,
+          JSON.stringify(updatedRecent)
+        );
+      }
+    } catch (error) {
+      console.warn('[ChatArea] Could not save recent reactions:', error);
+    }
+
+    onToggleReaction?.(messageId, emoji);
+    setReactionPickerMessageId(null);
+    setActiveMessageActionsId(null);
+  };
 
   // Close more menu on outside click
   useEffect(() => {
@@ -465,8 +514,8 @@ export default function ChatArea({
   const getMessageActionsPosition = (rect, isMe) => {
     const viewportWidth = document.documentElement.clientWidth;
     const viewportHeight = document.documentElement.clientHeight;
-    const menuWidth = Math.min(250, viewportWidth - 16);
-    const menuHeight = 90;
+    const menuWidth = Math.min(344, viewportWidth - 16);
+    const menuHeight = 150;
     const preferredLeft = isMe ? rect.right - menuWidth : rect.left;
     const left = Math.max(8, Math.min(preferredLeft, viewportWidth - menuWidth - 8));
     const top =
@@ -474,6 +523,30 @@ export default function ChatArea({
         ? rect.top - menuHeight - 8
         : Math.min(rect.bottom + 8, viewportHeight - menuHeight - 8);
     return { left, top };
+  };
+
+  const getReactionPickerPosition = () => {
+    const viewportWidth = document.documentElement.clientWidth;
+    const viewportHeight = document.documentElement.clientHeight;
+    const width = Math.min(320, viewportWidth - 24);
+    const height = Math.min(360, viewportHeight - 24);
+    const preferredLeft = messageActionsPosition?.left ?? 12;
+    const left = Math.max(12, Math.min(preferredLeft, viewportWidth - width - 12));
+    const anchorTop = messageActionsPosition?.top ?? viewportHeight / 2;
+    const top =
+      anchorTop >= height + 12
+        ? anchorTop - height - 8
+        : Math.min(anchorTop + 150, viewportHeight - height - 12);
+
+    return {
+      position: 'fixed',
+      left: `${left}px`,
+      top: `${top}px`,
+      right: 'auto',
+      bottom: 'auto',
+      width: `${width}px`,
+      maxHeight: `${height}px`,
+    };
   };
 
   const handleMessagePointerDown = (event, msg) => {
@@ -492,6 +565,9 @@ export default function ChatArea({
       message: msg,
       rect: event.currentTarget.getBoundingClientRect(),
       isMe: msg.sender === 'me',
+      bubble: event.currentTarget,
+      row: event.currentTarget.closest('.chat-bubble-row'),
+      hasSwipeOffset: false,
     };
     const pointerId = event.pointerId;
     didLongPressRef.current = false;
@@ -500,6 +576,7 @@ export default function ChatArea({
       if (touchStartRef.current?.pointerId !== pointerId) return;
       didLongPressRef.current = true;
       setActiveMessageActionsId(msg.id);
+      setReactionPickerMessageId(null);
       setMessageActionsPosition(
         getMessageActionsPosition(touchStartRef.current.rect, touchStartRef.current.isMe)
       );
@@ -513,7 +590,42 @@ export default function ChatArea({
       event.clientX - touchStartRef.current.x,
       event.clientY - touchStartRef.current.y
     );
-    if (distance > 20) clearTimeout(longPressTimerRef.current);
+    if (distance > 20) {
+      clearTimeout(longPressTimerRef.current);
+      touchStartRef.current.hasMoved = true;
+      if (!touchStartRef.current.hasPointerCapture) {
+        touchStartRef.current.bubble.setPointerCapture?.(event.pointerId);
+        touchStartRef.current.hasPointerCapture = true;
+      }
+    }
+
+    const start = touchStartRef.current;
+    const deltaX = event.clientX - start.x;
+    const deltaY = event.clientY - start.y;
+    if (deltaX > 0 && deltaX > Math.abs(deltaY)) {
+      const offset = Math.min(deltaX * 0.8, 72);
+      start.bubble.style.setProperty('--message-swipe-x', `${offset}px`);
+      start.bubble.classList.add('message-swipe-dragging');
+      start.row?.classList.add('message-swipe-active');
+      start.hasSwipeOffset = true;
+    } else if (start.hasSwipeOffset) {
+      start.bubble.style.setProperty('--message-swipe-x', '0px');
+      start.bubble.classList.remove('message-swipe-dragging');
+      start.row?.classList.remove('message-swipe-active');
+      start.hasSwipeOffset = false;
+    }
+  };
+
+  const settleMessageSwipe = (start) => {
+    if (!start?.hasSwipeOffset) return;
+    start.bubble.classList.remove('message-swipe-dragging');
+    start.bubble.classList.add('message-swipe-settling');
+    start.row?.classList.remove('message-swipe-active');
+    start.bubble.style.setProperty('--message-swipe-x', '0px');
+    setTimeout(() => {
+      start.bubble.classList.remove('message-swipe-settling');
+      start.bubble.style.removeProperty('--message-swipe-x');
+    }, 220);
   };
 
   const handleMessagePointerUp = (event) => {
@@ -522,9 +634,12 @@ export default function ChatArea({
     const start = touchStartRef.current;
     const deltaX = event.clientX - start.x;
     const deltaY = event.clientY - start.y;
+    settleMessageSwipe(start);
     if (!didLongPressRef.current && deltaX > 55 && deltaX > Math.abs(deltaY) * 1.2) {
       didLongPressRef.current = true;
       handleReplyToMessage(start.message);
+    } else if (start.hasMoved) {
+      didLongPressRef.current = true;
     }
     touchStartRef.current = null;
     if (didLongPressRef.current) {
@@ -537,6 +652,7 @@ export default function ChatArea({
   const handleMessagePointerCancel = (event) => {
     if (!touchStartRef.current || event.pointerId !== touchStartRef.current.pointerId) return;
     clearTimeout(longPressTimerRef.current);
+    settleMessageSwipe(touchStartRef.current);
     touchStartRef.current = null;
     didLongPressRef.current = false;
   };
@@ -1384,6 +1500,7 @@ export default function ChatArea({
                         if (msg.id.startsWith('temp_')) return;
                         event.preventDefault();
                         setActiveMessageActionsId(msg.id);
+                        setReactionPickerMessageId(null);
                         setMessageActionsPosition(
                           getMessageActionsPosition(
                             event.currentTarget.getBoundingClientRect(),
@@ -1399,6 +1516,9 @@ export default function ChatArea({
                         didLongPressRef.current = false;
                       }}
                     >
+                      <span className="message-swipe-reply-indicator" aria-hidden="true">
+                        <Reply size={16} />
+                      </span>
                       {msg.replyTo?.messageId && (
                         <button
                           type="button"
@@ -1621,20 +1741,42 @@ export default function ChatArea({
                         }}
                       >
                         <div className="message-reaction-options">
-                          {['👍', '❤️', '😂', '😮', '😢', '🙏'].map((emoji) => (
+                          {displayedReactionEmojis.map((emoji) => (
                             <button
                               type="button"
                               key={emoji}
                               onClick={() => {
-                                onToggleReaction?.(msg.id, emoji);
-                                setActiveMessageActionsId(null);
+                                selectMessageReaction(msg.id, emoji);
                               }}
                               aria-label={`React ${emoji}`}
                             >
                               {emoji}
                             </button>
                           ))}
+                          <button
+                            ref={reactionPickerTriggerRef}
+                            type="button"
+                            className="message-reaction-more"
+                            onClick={() =>
+                              setReactionPickerMessageId((activeId) =>
+                                activeId === msg.id ? null : msg.id
+                              )
+                            }
+                            aria-label="Choose another reaction"
+                            aria-expanded={reactionPickerMessageId === msg.id}
+                          >
+                            <Plus size={18} />
+                          </button>
                         </div>
+                        {reactionPickerMessageId === msg.id && (
+                          <EmojiPicker
+                            className="message-reaction-emoji-picker"
+                            style={getReactionPickerPosition()}
+                            triggerRef={reactionPickerTriggerRef}
+                            onSelectEmoji={(emoji) => selectMessageReaction(msg.id, emoji)}
+                            onClose={() => setReactionPickerMessageId(null)}
+                          />
+                        )}
                         <div className="message-action-options">
                           <button
                             type="button"

@@ -154,6 +154,15 @@ async function runTests() {
     assert(Array.isArray(onlineSnapshotA.onlineUserIds), 'User A received initial online users list');
     assert(onlineSnapshotA.onlineUserIds.includes(userAId), 'User A is listed in onlineUserIds');
 
+    const wsA2 = createWebSocketClient(tokenA);
+    const onlineSnapshotA2Promise = waitForEvent(wsA2, 'users:online');
+    await new Promise((resolve, reject) => {
+      wsA2.on('open', resolve);
+      wsA2.on('error', reject);
+    });
+    const onlineSnapshotA2 = await onlineSnapshotA2Promise;
+    assert(onlineSnapshotA2.onlineUserIds.includes(userAId), 'User A second device connects to real-time messaging');
+
     // 6. Connect User B via WebSocket and verify online status broadcast
     const userBStatusPromise = waitForEvent(wsA, 'user:status');
     const wsB = createWebSocketClient(tokenB);
@@ -241,6 +250,7 @@ async function runTests() {
     // 7. Test Real-Time Private Messaging (User A -> User B)
     const textMsg1 = 'Hello User B! Welcome to LANOVA.';
     const sentPromiseA = waitForEvent(wsA, 'message:sent');
+    const sentPromiseA2 = waitForEvent(wsA2, 'message:sent');
     const receivedPromiseB = waitForEvent(wsB, 'message:received');
 
     wsA.send(
@@ -253,11 +263,14 @@ async function runTests() {
       })
     );
 
-    const sentAck = await sentPromiseA;
+    const [sentAck, sentAckA2, receivedMsg] = await Promise.all([
+      sentPromiseA,
+      sentPromiseA2,
+      receivedPromiseB,
+    ]);
     assert(sentAck.status === 'saved' && sentAck.content === textMsg1, 'Sender received save acknowledgement (message:sent)');
     assert(sentAck.senderId === userAId && sentAck.receiverId === userBId, 'Sender acknowledgement contains correct sender and receiver IDs');
-
-    const receivedMsg = await receivedPromiseB;
+    assert(sentAckA2.id === sentAck.id, 'Sender second device receives new messages in real time');
     assert(receivedMsg.content === textMsg1, 'Recipient received private message in real time (message:received)');
     assert(receivedMsg.senderId === userAId, 'Incoming message specifies correct senderId');
     assert(receivedMsg.id === sentAck.id, 'Message ID matches between sender ack and recipient delivery');
@@ -291,6 +304,7 @@ async function runTests() {
 
     // Test editing, reactions, and replies persist and synchronize in real time.
     const updatedEventPromise = waitForEvent(wsB, 'message:updated');
+    const updatedSenderEventPromise = waitForEvent(wsA, 'message:updated');
     const editRes = await request(`/api/messages/item/${sentAck.id}`, {
       method: 'PUT',
       headers: { Authorization: `Bearer ${tokenA}` },
@@ -299,8 +313,12 @@ async function runTests() {
     assert(editRes.status === 200, 'Sender can edit their own message');
     assert(editRes.data.message.content === 'Edited message for User B.', 'Edit response contains updated message content');
     assert(Boolean(editRes.data.message.editedAt), 'Edited message includes an edited timestamp');
-    const updatedEvent = await updatedEventPromise;
+    const [updatedEvent, updatedSenderEvent] = await Promise.all([
+      updatedEventPromise,
+      updatedSenderEventPromise,
+    ]);
     assert(updatedEvent.id === sentAck.id, 'Recipient receives real-time message edit');
+    assert(updatedSenderEvent.id === sentAck.id, 'Sender receives real-time message edit');
 
     const unauthorizedEdit = await request(`/api/messages/item/${sentAck.id}`, {
       method: 'PUT',
@@ -310,25 +328,58 @@ async function runTests() {
     assert(unauthorizedEdit.status === 403, 'Recipient cannot edit the sender’s message');
 
     const reactionEventPromise = waitForEvent(wsA, 'message:reaction');
+    const reactionActorEventPromise = waitForEvent(wsB, 'message:reaction');
     const reactionRes = await request(`/api/messages/item/${sentAck.id}/reactions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${tokenB}` },
-      body: JSON.stringify({ emoji: '❤️' }),
+      body: JSON.stringify({ emoji: '🫂' }),
     });
     assert(reactionRes.status === 200, 'Conversation participant can react to a message');
     assert(
-      reactionRes.data.reactions.some((reaction) => reaction.userId === userBId && reaction.emoji === '❤️'),
+      reactionRes.data.reactions.some((reaction) => reaction.userId === userBId && reaction.emoji === '🫂'),
       'Reaction is persisted for the acting user'
     );
-    const reactionEvent = await reactionEventPromise;
+    const [reactionEvent, reactionActorEvent] = await Promise.all([
+      reactionEventPromise,
+      reactionActorEventPromise,
+    ]);
     assert(reactionEvent.messageId === sentAck.id, 'Sender receives real-time reaction update');
+    assert(reactionActorEvent.messageId === sentAck.id, 'Reacting user receives real-time reaction update');
+
+    const customReactionSenderEventPromise = waitForEvent(wsA, 'message:reaction');
+    const customReactionActorEventPromise = waitForEvent(wsB, 'message:reaction');
+    const customReactionRes = await request(`/api/messages/item/${sentAck.id}/reactions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokenB}` },
+      body: JSON.stringify({ emoji: '🥹' }),
+    });
+    assert(customReactionRes.status === 200, 'Additional emoji reactions are accepted');
+    const [customReactionSenderEvent, customReactionActorEvent] = await Promise.all([
+      customReactionSenderEventPromise,
+      customReactionActorEventPromise,
+    ]);
+    assert(
+      customReactionSenderEvent.reactions.some((reaction) => reaction.emoji === '🥹'),
+      'Sender receives the selected custom emoji in real time'
+    );
+    assert(
+      customReactionActorEvent.reactions.some((reaction) => reaction.emoji === '🥹'),
+      'Reacting user receives the selected custom emoji in real time'
+    );
 
     const removeReaction = await request(`/api/messages/item/${sentAck.id}/reactions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${tokenB}` },
-      body: JSON.stringify({ emoji: '❤️' }),
+      body: JSON.stringify({ emoji: '🥹' }),
     });
     assert(removeReaction.status === 200 && removeReaction.data.reactions.length === 0, 'Tapping the same reaction removes it');
+
+    const invalidReaction = await request(`/api/messages/item/${sentAck.id}/reactions`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokenB}` },
+      body: JSON.stringify({ emoji: 'not-an-emoji🔥' }),
+    });
+    assert(invalidReaction.status === 400, 'Server rejects text mixed into an emoji reaction');
 
     const replyText = 'This is a reply to the edited message.';
     const replySentPromise = waitForEvent(wsA, 'message:sent');
@@ -445,6 +496,7 @@ async function runTests() {
 
     // Close remaining socket
     wsA.close();
+    wsA2.close();
 
     console.log('\n========================================');
     if (failed === 0) {

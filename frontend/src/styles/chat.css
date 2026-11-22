@@ -1064,6 +1064,52 @@
   justify-content: flex-start;
 }
 
+.chat-bubble-row.message-swipe-active {
+  z-index: 4;
+}
+
+.chat-bubble {
+  position: relative;
+  transform: translateX(var(--message-swipe-x, 0px));
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.chat-bubble.message-swipe-dragging {
+  transition: none;
+}
+
+.chat-bubble.message-swipe-settling {
+  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.message-swipe-reply-indicator {
+  position: absolute;
+  top: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  color: var(--color-accent);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) scale(0.72);
+  transition: opacity 140ms ease, transform 180ms ease;
+}
+
+.row-received .message-swipe-reply-indicator {
+  right: -28px;
+}
+
+.row-sent .message-swipe-reply-indicator {
+  left: -28px;
+}
+
+.chat-bubble-row.message-swipe-active .message-swipe-reply-indicator {
+  opacity: 1;
+  transform: translateY(-50%) scale(1);
+}
+
 /* Sent message: neon lime pill */
 .bubble-sent {
   max-width: 58%;
@@ -1131,9 +1177,15 @@
 
 .bubble-received .bubble-meta {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
+  gap: 4px;
   font-size: 0.68rem;
   color: rgba(255, 255, 255, 0.42);
+}
+
+.chat-bubble.active-match {
+  transform: translateX(var(--message-swipe-x, 0px)) scale(1.02);
 }
 
 .bubble-text a {
@@ -1149,6 +1201,8 @@
   z-index: 1000;
   left: 8px;
   top: 8px;
+  width: max-content;
+  max-width: calc(100vw - 16px);
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -1167,6 +1221,7 @@
 }
 
 .message-reaction-options {
+  flex-wrap: wrap;
   padding-bottom: 5px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
@@ -1184,6 +1239,17 @@
 
 .message-reaction-options button {
   font-size: 1.08rem;
+}
+
+.message-reaction-options .message-reaction-more {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-accent);
+}
+
+.lanova-emoji-picker.message-reaction-emoji-picker {
+  z-index: 1100;
 }
 
 .message-reaction-options button:hover,
@@ -1466,11 +1532,20 @@
 
 .emoji-category-tabs {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.emoji-category-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .emoji-tab-btn {
+  flex: 0 0 34px;
   width: 34px;
   height: 34px;
   border-radius: 8px;
@@ -1492,6 +1567,7 @@
 }
 
 .emoji-close-btn {
+  flex: 0 0 28px;
   width: 28px;
   height: 28px;
   border-radius: 8px;
@@ -1982,6 +2058,16 @@
     -webkit-touch-callout: none;
     -webkit-user-select: none;
     user-select: none;
+  }
+
+  .message-reaction-options button {
+    min-width: 34px;
+    min-height: 34px;
+  }
+
+  .message-reaction-options .message-reaction-more {
+    min-width: 36px;
+    min-height: 36px;
   }
 
   .bubble-received {

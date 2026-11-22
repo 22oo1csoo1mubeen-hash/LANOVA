@@ -354,13 +354,15 @@ async function handleSendMessage(ws, sender, payload) {
     };
 
     // 7. Send save acknowledgement back to the sender
-    connectionManager.send(ws, {
+    const sentEvent = {
       type: 'message:sent',
       payload: {
         ...messagePayload,
         status: 'saved',
       },
-    });
+    };
+    connectionManager.send(ws, sentEvent);
+    connectionManager.sendToUserExcept(senderId, ws, sentEvent);
 
     // 8. If recipient is online, deliver the message in real-time over TCP WebSocket
     if (connectionManager.isUserOnline(receiverId)) {

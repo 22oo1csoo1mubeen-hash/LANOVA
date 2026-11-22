@@ -90,6 +90,7 @@ export default function ChatPage() {
     markMessageDelivered,
     markConversationRead,
     isConnected,
+    connectionVersion,
     addMessageListener,
   } = useSocket();
 
@@ -128,6 +129,9 @@ export default function ChatPage() {
   const loadingOlderUserIdsRef = useRef(new Set());
   const wallpaperVersionsRef = useRef(new Map());
   const lastReadRequestRef = useRef(null);
+  const previousConnectionVersionRef = useRef(0);
+  const staleHistoryUserIdsRef = useRef(new Set());
+  const syncingHistoryUserIdsRef = useRef(new Map());
 
   useEffect(() => {
     const updateVisibility = () => setIsPageVisible(document.visibilityState === 'visible');
@@ -250,6 +254,83 @@ export default function ChatPage() {
       isMounted = false;
     };
   }, [selectedUserId, loadedHistory, user?.id]);
+
+  useEffect(() => {
+    const previousVersion = previousConnectionVersionRef.current;
+    if (connectionVersion === previousVersion) return;
+    previousConnectionVersionRef.current = connectionVersion;
+
+    if (previousVersion === 0 || connectionVersion <= 1) return;
+    loadedHistory.forEach((conversationUserId) => {
+      staleHistoryUserIdsRef.current.add(conversationUserId);
+    });
+  }, [connectionVersion, loadedHistory]);
+
+  useEffect(() => {
+    const conversationUserId = selectedUserId;
+    if (
+      !isConnected ||
+      !conversationUserId ||
+      !loadedHistory.has(conversationUserId) ||
+      !staleHistoryUserIdsRef.current.has(conversationUserId) ||
+      syncingHistoryUserIdsRef.current.get(conversationUserId) === connectionVersion
+    ) {
+      return;
+    }
+
+    syncingHistoryUserIdsRef.current.set(conversationUserId, connectionVersion);
+    async function refreshAfterReconnect() {
+      try {
+        const data = await api.get(`/api/messages/${conversationUserId}?limit=50`);
+        if (!Array.isArray(data?.messages)) {
+          throw new Error('The server returned an invalid conversation history response.');
+        }
+        if (syncingHistoryUserIdsRef.current.get(conversationUserId) !== connectionVersion) {
+          return;
+        }
+
+        const refreshedMessages = data.messages.map((message) =>
+          formatMessage(message, user?.id)
+        );
+        setConversations((prev) => {
+          const existing = prev[conversationUserId] || [];
+          if (refreshedMessages.length === 0) {
+            return {
+              ...prev,
+              [conversationUserId]: existing.filter((message) =>
+                message.id.startsWith('temp_')
+              ),
+            };
+          }
+
+          const merged = new Map(existing.map((message) => [message.id, message]));
+          refreshedMessages.forEach((message) => {
+            const existingMessage = merged.get(message.id);
+            merged.set(
+              message.id,
+              existingMessage ? { ...existingMessage, ...message } : message
+            );
+          });
+          return {
+            ...prev,
+            [conversationUserId]: sortMessagesChronologically([...merged.values()]),
+          };
+        });
+        staleHistoryUserIdsRef.current.delete(conversationUserId);
+      } catch (error) {
+        console.warn(
+          `[ChatPage] Failed to sync history after reconnect for ${conversationUserId}:`,
+          error.message
+        );
+      } finally {
+        if (syncingHistoryUserIdsRef.current.get(conversationUserId) === connectionVersion) {
+          syncingHistoryUserIdsRef.current.delete(conversationUserId);
+        }
+      }
+    }
+
+    refreshAfterReconnect();
+  }, [connectionVersion, isConnected, loadedHistory, selectedUserId, user?.id]);
 
   // 4. Listen for real-time WebSocket events (incoming messages & send acks)
   useEffect(() => {
