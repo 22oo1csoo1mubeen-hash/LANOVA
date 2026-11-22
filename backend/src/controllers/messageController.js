@@ -512,24 +512,20 @@ export async function toggleMessageReaction(req, res, next) {
         _id: result.message._id,
         reactions: { $elemMatch: { userId: userObjectId, emoji } },
       },
-      { $pull: { reactions: { userId: userObjectId } } },
+      { $pull: { reactions: { userId: userObjectId, emoji } } },
       { new: true }
     );
 
     if (!updatedMessage) {
       updatedMessage = await Message.findOneAndUpdate(
-        { _id: result.message._id, 'reactions.userId': userObjectId },
-        { $set: { 'reactions.$.emoji': emoji } },
+        { _id: result.message._id },
+        { $addToSet: { reactions: { userId: userObjectId, emoji } } },
         { new: true, runValidators: true }
       );
     }
 
     if (!updatedMessage) {
-      updatedMessage = await Message.findOneAndUpdate(
-        { _id: result.message._id, 'reactions.userId': { $ne: userObjectId } },
-        { $push: { reactions: { userId: userObjectId, emoji } } },
-        { new: true, runValidators: true }
-      );
+      updatedMessage = await Message.findById(result.message._id);
     }
 
     if (!updatedMessage) {

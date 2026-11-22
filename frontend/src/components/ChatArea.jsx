@@ -144,7 +144,7 @@ function getMessageDateKey(dateStr) {
 }
 
 const DEFAULT_REACTION_EMOJIS = ['👍', '❤️', '😂', '😮', '🫂', '🥹'];
-const RECENT_REACTION_LIMIT = 4;
+const RECENT_REACTION_LIMIT = 6;
 
 function renderLinkedText(text) {
   const linkPattern =
@@ -299,7 +299,11 @@ export default function ChatArea({
   useEffect(() => () => stopTyping(), [stopTyping]);
 
   const displayedReactionEmojis = useMemo(
-    () => [...new Set([...recentReactionEmojis, ...DEFAULT_REACTION_EMOJIS])],
+    () =>
+      [...new Set([...recentReactionEmojis, ...DEFAULT_REACTION_EMOJIS])].slice(
+        0,
+        RECENT_REACTION_LIMIT
+      ),
     [recentReactionEmojis]
   );
 
@@ -342,7 +346,13 @@ export default function ChatArea({
   useEffect(() => {
     if (!activeMessageActionsId) return undefined;
     const handleOutsidePointerDown = (event) => {
-      if (event.target.closest?.('.message-context-menu')) return;
+      if (
+        event.target.closest?.(
+          '.message-context-menu, .message-reaction-emoji-picker'
+        )
+      ) {
+        return;
+      }
       setActiveMessageActionsId(null);
       setReactionPickerMessageId(null);
       setReactionPickerPosition(null);
@@ -540,11 +550,18 @@ export default function ChatArea({
       menuWidth = Math.min(menuWidth, viewportWidth - 16);
       const preferredLeft = isMe ? rect.right - menuWidth : rect.left;
       const left = Math.max(8, Math.min(preferredLeft, viewportWidth - menuWidth - 8));
+      menuHeight = Math.min(menuHeight, viewportHeight - 16);
       const maxTop = Math.max(8, viewportHeight - menuHeight - 8);
+      const spaceAbove = rect.top - 8;
+      const spaceBelow = viewportHeight - rect.bottom - 8;
       const top =
-        rect.top >= menuHeight + 16
-          ? Math.max(8, rect.top - menuHeight - 8)
-          : Math.max(8, Math.min(rect.bottom + 8, maxTop));
+        spaceAbove >= menuHeight
+          ? rect.top - menuHeight - 8
+          : spaceBelow >= menuHeight
+            ? rect.bottom + 8
+            : spaceAbove >= spaceBelow
+              ? Math.max(8, Math.min(rect.top - menuHeight - 8, maxTop))
+              : Math.max(8, Math.min(rect.bottom + 8, maxTop));
       return { left, top };
     },
     []
@@ -585,14 +602,41 @@ export default function ChatArea({
     const anchor = messageActionAnchorRef.current;
     const menu = messageActionsMenuRef.current;
     if (!activeMessageActionsId || !anchor || !menu) return;
+    const rect = anchor.element?.getBoundingClientRect() || anchor.rect;
     setMessageActionsPosition(
       getMessageActionsPosition(
-        anchor.rect,
+        rect,
         anchor.isMe,
         menu.offsetWidth,
         menu.offsetHeight
       )
     );
+  }, [activeMessageActionsId, displayedReactionEmojis, getMessageActionsPosition]);
+
+  useEffect(() => {
+    if (!activeMessageActionsId) return undefined;
+    const repositionMenu = () => {
+      const anchor = messageActionAnchorRef.current;
+      const menu = messageActionsMenuRef.current;
+      if (!anchor || !menu) return;
+      const rect = anchor.element?.getBoundingClientRect();
+      if (!rect) return;
+      anchor.rect = rect;
+      setMessageActionsPosition(
+        getMessageActionsPosition(
+          rect,
+          anchor.isMe,
+          menu.offsetWidth,
+          menu.offsetHeight
+        )
+      );
+    };
+    window.addEventListener('resize', repositionMenu);
+    window.addEventListener('scroll', repositionMenu, true);
+    return () => {
+      window.removeEventListener('resize', repositionMenu);
+      window.removeEventListener('scroll', repositionMenu, true);
+    };
   }, [activeMessageActionsId, getMessageActionsPosition]);
 
   useLayoutEffect(() => {
@@ -627,15 +671,18 @@ export default function ChatArea({
     longPressTimerRef.current = setTimeout(() => {
       if (touchStartRef.current?.pointerId !== pointerId) return;
       didLongPressRef.current = true;
+      const rect = touchStartRef.current.bubble.getBoundingClientRect();
+      touchStartRef.current.rect = rect;
       messageActionAnchorRef.current = {
-        rect: touchStartRef.current.rect,
+        element: touchStartRef.current.bubble,
+        rect,
         isMe: touchStartRef.current.isMe,
       };
       setActiveMessageActionsId(msg.id);
       setReactionPickerMessageId(null);
       setReactionPickerPosition(null);
       setMessageActionsPosition(
-        getMessageActionsPosition(touchStartRef.current.rect, touchStartRef.current.isMe)
+        getMessageActionsPosition(rect, touchStartRef.current.isMe)
       );
       if (navigator.vibrate) navigator.vibrate(25);
     }, 500);
@@ -1557,7 +1604,11 @@ export default function ChatArea({
                         if (msg.id.startsWith('temp_')) return;
                         event.preventDefault();
                         const rect = event.currentTarget.getBoundingClientRect();
-                        messageActionAnchorRef.current = { rect, isMe };
+                        messageActionAnchorRef.current = {
+                          element: event.currentTarget,
+                          rect,
+                          isMe,
+                        };
                         setActiveMessageActionsId(msg.id);
                         setReactionPickerMessageId(null);
                         setReactionPickerPosition(null);
@@ -1798,7 +1849,7 @@ export default function ChatArea({
                           }}
                         >
                           <div className="message-reaction-options">
-                            {displayedReactionEmojis.map((emoji) => (
+                            {displayedReactionEmojis.slice(0, 6).map((emoji) => (
                               <button
                                 type="button"
                                 key={emoji}
@@ -1828,17 +1879,21 @@ export default function ChatArea({
                             </button>
                           </div>
                           {reactionPickerMessageId === msg.id && (
-                            <EmojiPicker
-                              className="message-reaction-emoji-picker"
-                              style={reactionPickerPosition}
-                              triggerRef={reactionPickerTriggerRef}
-                              elementRef={reactionPickerElementRef}
-                              onSelectEmoji={(emoji) => selectMessageReaction(msg.id, emoji)}
-                              onClose={() => {
-                                setReactionPickerMessageId(null);
-                                setReactionPickerPosition(null);
-                              }}
-                            />
+                            createPortal(
+                              <EmojiPicker
+                                className="message-reaction-emoji-picker"
+                                style={reactionPickerPosition}
+                                triggerRef={reactionPickerTriggerRef}
+                                elementRef={reactionPickerElementRef}
+                                onSelectEmoji={(emoji) => selectMessageReaction(msg.id, emoji)}
+                                onClose={() => {
+                                  setReactionPickerMessageId(null);
+                                  setReactionPickerPosition(null);
+                                }}
+                              />,
+                              document.body,
+                              `reaction-picker-${msg.id}`
+                            )
                           )}
                           <div className="message-action-options">
                             <button

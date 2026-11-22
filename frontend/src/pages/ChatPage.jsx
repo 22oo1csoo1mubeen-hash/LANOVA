@@ -153,6 +153,33 @@ export default function ChatPage() {
   const previousConnectionVersionRef = useRef(0);
   const staleHistoryUserIdsRef = useRef(new Set());
   const syncingHistoryUserIdsRef = useRef(new Map());
+  const applyConversationWallpaper = useCallback((peerId, wallpaper, updatedAt) => {
+    if (peerId == null) return;
+    const conversationUserId = peerId.toString();
+    const incomingVersion = updatedAt || wallpaper?.updatedAt || null;
+    const latestVersion = wallpaperVersionsRef.current.get(conversationUserId);
+    if (latestVersion && incomingVersion) {
+      const incomingTimestamp = Date.parse(incomingVersion);
+      const latestTimestamp = Date.parse(latestVersion);
+      if (
+        Number.isFinite(incomingTimestamp) &&
+        Number.isFinite(latestTimestamp) &&
+        incomingTimestamp < latestTimestamp
+      ) {
+        return;
+      }
+    } else if (latestVersion && !incomingVersion) {
+      return;
+    }
+
+    if (incomingVersion) {
+      wallpaperVersionsRef.current.set(conversationUserId, incomingVersion);
+    }
+    setConversationWallpapers((previous) => ({
+      ...previous,
+      [conversationUserId]: wallpaper || null,
+    }));
+  }, []);
 
   useEffect(() => {
     const updateVisibility = () => setIsPageVisible(document.visibilityState === 'visible');
@@ -247,22 +274,11 @@ export default function ChatPage() {
             ...prev,
             [selectedUserId]: Boolean(data.hasMore),
           }));
-          const fetchedWallpaperVersion =
-            data.wallpaperUpdatedAt || data.wallpaper?.updatedAt || null;
-          const latestWallpaperVersion = wallpaperVersionsRef.current.get(selectedUserId);
-          if (
-            !latestWallpaperVersion ||
-            (fetchedWallpaperVersion &&
-              Date.parse(fetchedWallpaperVersion) >= Date.parse(latestWallpaperVersion))
-          ) {
-            if (fetchedWallpaperVersion) {
-              wallpaperVersionsRef.current.set(selectedUserId, fetchedWallpaperVersion);
-            }
-            setConversationWallpapers((prev) => ({
-              ...prev,
-              [selectedUserId]: data.wallpaper || null,
-            }));
-          }
+          applyConversationWallpaper(
+            selectedUserId,
+            data.wallpaper,
+            data.wallpaperUpdatedAt
+          );
           setLoadedHistory((prev) => new Set(prev).add(selectedUserId));
         }
       } catch (err) {
@@ -274,7 +290,7 @@ export default function ChatPage() {
     return () => {
       isMounted = false;
     };
-  }, [selectedUserId, loadedHistory, user?.id]);
+  }, [applyConversationWallpaper, selectedUserId, loadedHistory, user?.id]);
 
   useEffect(() => {
     const previousVersion = previousConnectionVersionRef.current;
@@ -431,19 +447,7 @@ export default function ChatPage() {
           (participantId) => participantId.toString() !== user?.id?.toString()
         );
         if (peerId) {
-          const incomingVersion = payload.updatedAt || payload.wallpaper?.updatedAt;
-          const latestVersion = wallpaperVersionsRef.current.get(peerId);
-          if (
-            !latestVersion ||
-            !incomingVersion ||
-            Date.parse(incomingVersion) >= Date.parse(latestVersion)
-          ) {
-            if (incomingVersion) wallpaperVersionsRef.current.set(peerId, incomingVersion);
-            setConversationWallpapers((prev) => ({
-              ...prev,
-              [peerId]: payload.wallpaper || null,
-            }));
-          }
+          applyConversationWallpaper(peerId, payload.wallpaper, payload.updatedAt);
         }
       } else if (type === 'message:deleted' && payload) {
         // Individual message deleted in real time
@@ -551,7 +555,7 @@ export default function ChatPage() {
       }
       typingTimeouts.clear();
     };
-  }, [addMessageListener, markMessageDelivered, user?.id]);
+  }, [addMessageListener, applyConversationWallpaper, markMessageDelivered, user?.id]);
 
   const [mobileChatOpen, setMobileChatOpen] = useState(() => {
     try {
@@ -851,27 +855,23 @@ export default function ChatPage() {
         formData,
         { method: 'PUT' }
       );
-      if (data.wallpaperUpdatedAt) {
-        wallpaperVersionsRef.current.set(selectedUserId, data.wallpaperUpdatedAt);
-      }
-      setConversationWallpapers((prev) => ({
-        ...prev,
-        [selectedUserId]: data.wallpaper,
-      }));
+      applyConversationWallpaper(
+        selectedUserId,
+        data.wallpaper,
+        data.wallpaperUpdatedAt
+      );
     },
-    [selectedUserId]
+    [applyConversationWallpaper, selectedUserId]
   );
   const removeSharedWallpaper = useCallback(async () => {
     if (!selectedUserId) return;
     const data = await api.del(`/api/messages/${selectedUserId}/wallpaper`);
-    if (data.wallpaperUpdatedAt) {
-      wallpaperVersionsRef.current.set(selectedUserId, data.wallpaperUpdatedAt);
-    }
-    setConversationWallpapers((prev) => ({
-      ...prev,
-      [selectedUserId]: null,
-    }));
-  }, [selectedUserId]);
+    applyConversationWallpaper(
+      selectedUserId,
+      data.wallpaper,
+      data.wallpaperUpdatedAt
+    );
+  }, [applyConversationWallpaper, selectedUserId]);
   const lastUnreadIncomingMessage = useMemo(() => {
     for (let index = currentMessages.length - 1; index >= 0; index--) {
       const message = currentMessages[index];

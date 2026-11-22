@@ -366,13 +366,24 @@ async function runTests() {
       customReactionActorEvent.reactions.some((reaction) => reaction.emoji === '🥹'),
       'Reacting user receives the selected custom emoji in real time'
     );
+    assert(
+      customReactionRes.data.reactions.some((reaction) => reaction.userId === userBId && reaction.emoji === '🫂') &&
+        customReactionRes.data.reactions.some((reaction) => reaction.userId === userBId && reaction.emoji === '🥹'),
+      'A user can keep multiple different reactions on the same message'
+    );
 
     const removeReaction = await request(`/api/messages/item/${sentAck.id}/reactions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${tokenB}` },
       body: JSON.stringify({ emoji: '🥹' }),
     });
-    assert(removeReaction.status === 200 && removeReaction.data.reactions.length === 0, 'Tapping the same reaction removes it');
+    assert(
+      removeReaction.status === 200 &&
+        removeReaction.data.reactions.length === 1 &&
+        removeReaction.data.reactions[0].userId === userBId &&
+        removeReaction.data.reactions[0].emoji === '🫂',
+      'Tapping a reaction removes only that emoji for the acting user'
+    );
 
     const invalidReaction = await request(`/api/messages/item/${sentAck.id}/reactions`, {
       method: 'POST',

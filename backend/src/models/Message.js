@@ -1,5 +1,13 @@
 import mongoose from 'mongoose';
 
+const reactionSchema = new mongoose.Schema(
+  {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    emoji: { type: String, required: true, maxlength: 32 },
+  },
+  { _id: false }
+);
+
 /**
  * Message Schema — LANOVA Private Messaging
  * Represents one-to-one messages persisted in MongoDB.
@@ -81,12 +89,7 @@ const messageSchema = new mongoose.Schema(
       content: { type: String, default: null, maxlength: 5000 },
       senderId: { type: String, default: null },
     },
-    reactions: [
-      {
-        userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-        emoji: { type: String, required: true, maxlength: 32 },
-      },
-    ],
+    reactions: [reactionSchema],
   },
   {
     timestamps: true,
