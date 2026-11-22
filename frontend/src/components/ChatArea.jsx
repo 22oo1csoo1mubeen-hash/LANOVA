@@ -544,11 +544,12 @@ export default function ChatArea({
   };
 
   const getMessageActionsPosition = useCallback(
-    (rect, isMe, menuWidth = 344, menuHeight = 150) => {
-      const viewportWidth = document.documentElement.clientWidth;
-      const viewportHeight = document.documentElement.clientHeight;
+    (rect, menuWidth = 344, menuHeight = 150) => {
+      const viewport = window.visualViewport;
+      const viewportWidth = viewport?.width || document.documentElement.clientWidth;
+      const viewportHeight = viewport?.height || document.documentElement.clientHeight;
       menuWidth = Math.min(menuWidth, viewportWidth - 16);
-      const preferredLeft = isMe ? rect.right - menuWidth : rect.left;
+      const preferredLeft = rect.left + rect.width / 2 - menuWidth / 2;
       const left = Math.max(8, Math.min(preferredLeft, viewportWidth - menuWidth - 8));
       menuHeight = Math.min(menuHeight, viewportHeight - 16);
       const maxTop = Math.max(8, viewportHeight - menuHeight - 8);
@@ -568,8 +569,9 @@ export default function ChatArea({
   );
 
   const getReactionPickerPosition = useCallback(() => {
-    const viewportWidth = document.documentElement.clientWidth;
-    const viewportHeight = document.documentElement.clientHeight;
+    const viewport = window.visualViewport;
+    const viewportWidth = viewport?.width || document.documentElement.clientWidth;
+    const viewportHeight = viewport?.height || document.documentElement.clientHeight;
     const picker = reactionPickerElementRef.current;
     const width = picker?.offsetWidth || Math.min(320, viewportWidth - 24);
     const height = picker?.offsetHeight || Math.min(360, viewportHeight - 24);
@@ -580,12 +582,14 @@ export default function ChatArea({
       : menuRect?.left ?? 12;
     const left = Math.max(12, Math.min(preferredLeft, viewportWidth - width - 12));
     const anchorTop = triggerRect?.top ?? menuRect?.top ?? viewportHeight / 2;
-    const topAbove = anchorTop - height - 8;
-    const topBelow = (triggerRect?.bottom ?? menuRect?.bottom ?? 0) + 8;
-    const top =
-      topAbove >= 8
-        ? topAbove
-        : Math.max(8, Math.min(topBelow, viewportHeight - height - 8));
+    const anchorBottom = triggerRect?.bottom ?? menuRect?.bottom ?? anchorTop;
+    const spaceAbove = Math.max(0, anchorTop - 16);
+    const spaceBelow = Math.max(0, viewportHeight - anchorBottom - 16);
+    const placeAbove = spaceAbove >= height || spaceAbove >= spaceBelow;
+    const availableHeight = Math.max(1, Math.min(height, placeAbove ? spaceAbove : spaceBelow));
+    const top = placeAbove
+      ? Math.max(8, anchorTop - availableHeight - 8)
+      : Math.min(anchorBottom + 8, viewportHeight - availableHeight - 8);
 
     return {
       position: 'fixed',
@@ -594,7 +598,7 @@ export default function ChatArea({
       right: 'auto',
       bottom: 'auto',
       width: `${width}px`,
-      maxHeight: `${height}px`,
+      maxHeight: `${availableHeight}px`,
     };
   }, []);
 
@@ -602,15 +606,19 @@ export default function ChatArea({
     const anchor = messageActionAnchorRef.current;
     const menu = messageActionsMenuRef.current;
     if (!activeMessageActionsId || !anchor || !menu) return;
-    const rect = anchor.element?.getBoundingClientRect() || anchor.rect;
-    setMessageActionsPosition(
-      getMessageActionsPosition(
-        rect,
-        anchor.isMe,
-        menu.offsetWidth,
-        menu.offsetHeight
-      )
-    );
+    const updatePosition = () => {
+      const rect = anchor.element?.getBoundingClientRect() || anchor.rect;
+      if (!rect) return;
+      setMessageActionsPosition(
+        getMessageActionsPosition(rect, menu.offsetWidth, menu.offsetHeight)
+      );
+    };
+    updatePosition();
+    if (typeof ResizeObserver === 'undefined') return undefined;
+    const resizeObserver = new ResizeObserver(updatePosition);
+    resizeObserver.observe(menu);
+    if (anchor.element) resizeObserver.observe(anchor.element);
+    return () => resizeObserver.disconnect();
   }, [activeMessageActionsId, displayedReactionEmojis, getMessageActionsPosition]);
 
   useEffect(() => {
@@ -625,7 +633,6 @@ export default function ChatArea({
       setMessageActionsPosition(
         getMessageActionsPosition(
           rect,
-          anchor.isMe,
           menu.offsetWidth,
           menu.offsetHeight
         )
@@ -633,9 +640,13 @@ export default function ChatArea({
     };
     window.addEventListener('resize', repositionMenu);
     window.addEventListener('scroll', repositionMenu, true);
+    window.visualViewport?.addEventListener('resize', repositionMenu);
+    window.visualViewport?.addEventListener('scroll', repositionMenu);
     return () => {
       window.removeEventListener('resize', repositionMenu);
       window.removeEventListener('scroll', repositionMenu, true);
+      window.visualViewport?.removeEventListener('resize', repositionMenu);
+      window.visualViewport?.removeEventListener('scroll', repositionMenu);
     };
   }, [activeMessageActionsId, getMessageActionsPosition]);
 
@@ -643,6 +654,21 @@ export default function ChatArea({
     if (reactionPickerMessageId && reactionPickerElementRef.current) {
       setReactionPickerPosition(getReactionPickerPosition());
     }
+  }, [getReactionPickerPosition, reactionPickerMessageId]);
+
+  useEffect(() => {
+    if (!reactionPickerMessageId) return undefined;
+    const repositionPicker = () => {
+      if (reactionPickerElementRef.current) {
+        setReactionPickerPosition(getReactionPickerPosition());
+      }
+    };
+    window.visualViewport?.addEventListener('resize', repositionPicker);
+    window.visualViewport?.addEventListener('scroll', repositionPicker);
+    return () => {
+      window.visualViewport?.removeEventListener('resize', repositionPicker);
+      window.visualViewport?.removeEventListener('scroll', repositionPicker);
+    };
   }, [getReactionPickerPosition, reactionPickerMessageId]);
 
   const handleMessagePointerDown = (event, msg) => {
@@ -676,13 +702,12 @@ export default function ChatArea({
       messageActionAnchorRef.current = {
         element: touchStartRef.current.bubble,
         rect,
-        isMe: touchStartRef.current.isMe,
       };
       setActiveMessageActionsId(msg.id);
       setReactionPickerMessageId(null);
       setReactionPickerPosition(null);
       setMessageActionsPosition(
-        getMessageActionsPosition(rect, touchStartRef.current.isMe)
+        getMessageActionsPosition(rect)
       );
       if (navigator.vibrate) navigator.vibrate(25);
     }, 500);
@@ -1607,12 +1632,11 @@ export default function ChatArea({
                         messageActionAnchorRef.current = {
                           element: event.currentTarget,
                           rect,
-                          isMe,
                         };
                         setActiveMessageActionsId(msg.id);
                         setReactionPickerMessageId(null);
                         setReactionPickerPosition(null);
-                        setMessageActionsPosition(getMessageActionsPosition(rect, isMe));
+                        setMessageActionsPosition(getMessageActionsPosition(rect));
                       }}
                       onPointerDown={(event) => handleMessagePointerDown(event, msg)}
                       onClick={(event) => {
