@@ -67,7 +67,7 @@ export default function UserInfoModal({ user, onClose, onOpenChat }) {
             {isOnline
               ? 'Connected to LAN Mesh'
               : user.lastSeen
-                ? `Last seen ${user.lastSeen}`
+                ? `Last active ${user.lastSeen}`
                 : 'Offline'}
           </p>
         </div>

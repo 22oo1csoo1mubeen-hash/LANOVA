@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { extractTokenFromRequest, verifySocketToken } from './socketAuth.js';
 import { connectionManager } from './connectionManager.js';
 import { handleSocketMessage } from './socketHandlers.js';
+import { User } from '../models/User.js';
 
 /**
  * Socket Server — LANOVA Milestone 2
@@ -121,7 +122,7 @@ function setupAuthenticatedSocket(ws, user) {
   });
 
   // Handle socket closure
-  ws.on('close', (code, reason) => {
+  ws.on('close', async (code, reason) => {
     const { isLastConnection } = connectionManager.removeConnection(ws);
     console.log(
       `[LANOVA WebSocket] User disconnected: ${user.username} (${userId}) [code: ${code}, reason: ${reason.toString() || 'none'}]`
@@ -129,10 +130,22 @@ function setupAuthenticatedSocket(ws, user) {
 
     // If this was the user's final connection, broadcast offline status
     if (isLastConnection) {
-      connectionManager.broadcast({
-        type: 'user:status',
-        payload: { userId, status: 'offline' },
-      });
+      const lastSeen = new Date();
+      try {
+        await User.updateOne({ _id: userId }, { $set: { lastSeen } });
+      } catch (error) {
+        console.error(
+          `[LANOVA WebSocket] Failed to save last active time for ${user.username}:`,
+          error.message
+        );
+      }
+
+      if (!connectionManager.isUserOnline(userId)) {
+        connectionManager.broadcast({
+          type: 'user:status',
+          payload: { userId, status: 'offline', lastSeen: lastSeen.toISOString() },
+        });
+      }
     }
   });
 

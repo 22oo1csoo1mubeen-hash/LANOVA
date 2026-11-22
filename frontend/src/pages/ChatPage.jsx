@@ -8,6 +8,27 @@ import '../styles/chat.css';
 
 const EMPTY_MESSAGES = [];
 
+function formatLastActive(lastSeen) {
+  if (!lastSeen) return null;
+  const date = new Date(lastSeen);
+  if (Number.isNaN(date.getTime())) return null;
+
+  const now = new Date();
+  const time = date.toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+  if (date.toDateString() === now.toDateString()) return `today at ${time}`;
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return `yesterday at ${time}`;
+
+  const dateOptions = { month: 'short', day: 'numeric' };
+  if (date.getFullYear() !== now.getFullYear()) dateOptions.year = 'numeric';
+  return `${date.toLocaleDateString(undefined, dateOptions)} at ${time}`;
+}
+
 /**
  * Format raw message object for display in ChatArea
  */
@@ -195,7 +216,7 @@ export default function ChatPage() {
       username: u.username,
       avatar: true,
       status: isUserOnline(u.id) ? 'online' : 'offline',
-      lastSeen: null,
+      lastSeen: formatLastActive(u.lastSeen),
     }));
   }, [rawUsers, isUserOnline]);
 
@@ -338,7 +359,15 @@ export default function ChatPage() {
     const removeListener = addMessageListener((data) => {
       const { type, payload } = data;
 
-      if (type === 'message:received' && payload) {
+      if (type === 'user:status' && payload?.status === 'offline' && payload.lastSeen) {
+        setRawUsers((previousUsers) =>
+          previousUsers.map((listedUser) =>
+            listedUser.id === payload.userId
+              ? { ...listedUser, lastSeen: payload.lastSeen }
+              : listedUser
+          )
+        );
+      } else if (type === 'message:received' && payload) {
         // Incoming message from another user
         const otherUserId = payload.senderId;
         const formattedMsg = formatMessage(payload, user?.id);

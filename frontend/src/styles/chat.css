@@ -625,6 +625,7 @@
 
 /* Chat header */
 .chat-header {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -632,6 +633,10 @@
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   background: rgba(12, 18, 14, 0.4);
   flex-shrink: 0;
+}
+
+.chat-header:has(.chat-header-dropdown) {
+  z-index: 2000;
 }
 
 .chat-header-user {
@@ -739,11 +744,9 @@
   position: absolute;
   top: calc(100% + 8px);
   right: 0;
-  z-index: 60;
+  z-index: 2001;
   min-width: 180px;
-  background: rgba(14, 22, 16, 0.96);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  background: #0c160e;
   border: 1px solid rgba(194, 241, 53, 0.22);
   border-radius: 12px;
   padding: 5px;
@@ -1198,7 +1201,7 @@
 
 .message-context-menu {
   position: fixed;
-  z-index: 1000;
+  z-index: 5000;
   left: 8px;
   top: 8px;
   width: max-content;
@@ -1209,8 +1212,10 @@
   padding: 7px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 12px;
-  background: rgba(13, 20, 15, 0.97);
+  background: #0d140f;
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
 }
 
 .message-reaction-options,
@@ -1249,7 +1254,7 @@
 }
 
 .lanova-emoji-picker.message-reaction-emoji-picker {
-  z-index: 1100;
+  z-index: 5001;
 }
 
 .message-reaction-options button:hover,
@@ -1921,6 +1926,7 @@
 
   /* Chat Top Header on Mobile */
   .chat-header {
+    position: relative;
     flex-shrink: 0;
     display: flex;
     align-items: center;

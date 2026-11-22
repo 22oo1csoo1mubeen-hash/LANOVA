@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Search,
   MoreVertical,
@@ -241,6 +242,7 @@ export default function ChatArea({
   const [isMuted, setIsMuted] = useState(false);
   const [activeMessageActionsId, setActiveMessageActionsId] = useState(null);
   const [messageActionsPosition, setMessageActionsPosition] = useState(null);
+  const [reactionPickerPosition, setReactionPickerPosition] = useState(null);
   const [recentReactionEmojis, setRecentReactionEmojis] = useState(() => {
     if (!currentUserId || typeof window === 'undefined') return [];
     try {
@@ -261,6 +263,9 @@ export default function ChatArea({
   const [replyToMessage, setReplyToMessage] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
   const messagesContainerRef = useRef(null);
+  const messageActionsMenuRef = useRef(null);
+  const reactionPickerElementRef = useRef(null);
+  const messageActionAnchorRef = useRef(null);
   const inputRef = useRef(null);
   const emojiButtonRef = useRef(null);
   const reactionPickerTriggerRef = useRef(null);
@@ -317,6 +322,7 @@ export default function ChatArea({
 
     onToggleReaction?.(messageId, emoji);
     setReactionPickerMessageId(null);
+    setReactionPickerPosition(null);
     setActiveMessageActionsId(null);
   };
 
@@ -332,6 +338,18 @@ export default function ChatArea({
       return () => window.removeEventListener('click', handleOutsideClick);
     }
   }, [showMoreMenu]);
+
+  useEffect(() => {
+    if (!activeMessageActionsId) return undefined;
+    const handleOutsidePointerDown = (event) => {
+      if (event.target.closest?.('.message-context-menu')) return;
+      setActiveMessageActionsId(null);
+      setReactionPickerMessageId(null);
+      setReactionPickerPosition(null);
+    };
+    document.addEventListener('pointerdown', handleOutsidePointerDown);
+    return () => document.removeEventListener('pointerdown', handleOutsidePointerDown);
+  }, [activeMessageActionsId]);
 
   // Ensure messages are strictly sorted chronologically
   const sortedMessages = useMemo(() => {
@@ -465,6 +483,8 @@ export default function ChatArea({
     });
     setEditingMessage(null);
     setInputText('');
+    setReactionPickerMessageId(null);
+    setReactionPickerPosition(null);
     setActiveMessageActionsId(null);
     inputRef.current?.focus();
   };
@@ -473,7 +493,9 @@ export default function ChatArea({
     setEditingMessage(msg);
     setReplyToMessage(null);
     setInputText(msg.text || '');
+    setReactionPickerMessageId(null);
     setActiveMessageActionsId(null);
+    setReactionPickerPosition(null);
     inputRef.current?.focus();
   };
 
@@ -511,32 +533,42 @@ export default function ChatArea({
     setShowMoreMenu(false);
   };
 
-  const getMessageActionsPosition = (rect, isMe) => {
-    const viewportWidth = document.documentElement.clientWidth;
-    const viewportHeight = document.documentElement.clientHeight;
-    const menuWidth = Math.min(344, viewportWidth - 16);
-    const menuHeight = 150;
-    const preferredLeft = isMe ? rect.right - menuWidth : rect.left;
-    const left = Math.max(8, Math.min(preferredLeft, viewportWidth - menuWidth - 8));
-    const top =
-      rect.top >= menuHeight + 16
-        ? rect.top - menuHeight - 8
-        : Math.min(rect.bottom + 8, viewportHeight - menuHeight - 8);
-    return { left, top };
-  };
+  const getMessageActionsPosition = useCallback(
+    (rect, isMe, menuWidth = 344, menuHeight = 150) => {
+      const viewportWidth = document.documentElement.clientWidth;
+      const viewportHeight = document.documentElement.clientHeight;
+      menuWidth = Math.min(menuWidth, viewportWidth - 16);
+      const preferredLeft = isMe ? rect.right - menuWidth : rect.left;
+      const left = Math.max(8, Math.min(preferredLeft, viewportWidth - menuWidth - 8));
+      const maxTop = Math.max(8, viewportHeight - menuHeight - 8);
+      const top =
+        rect.top >= menuHeight + 16
+          ? Math.max(8, rect.top - menuHeight - 8)
+          : Math.max(8, Math.min(rect.bottom + 8, maxTop));
+      return { left, top };
+    },
+    []
+  );
 
-  const getReactionPickerPosition = () => {
+  const getReactionPickerPosition = useCallback(() => {
     const viewportWidth = document.documentElement.clientWidth;
     const viewportHeight = document.documentElement.clientHeight;
-    const width = Math.min(320, viewportWidth - 24);
-    const height = Math.min(360, viewportHeight - 24);
-    const preferredLeft = messageActionsPosition?.left ?? 12;
+    const picker = reactionPickerElementRef.current;
+    const width = picker?.offsetWidth || Math.min(320, viewportWidth - 24);
+    const height = picker?.offsetHeight || Math.min(360, viewportHeight - 24);
+    const triggerRect = reactionPickerTriggerRef.current?.getBoundingClientRect();
+    const menuRect = messageActionsMenuRef.current?.getBoundingClientRect();
+    const preferredLeft = triggerRect
+      ? triggerRect.left + triggerRect.width / 2 - width / 2
+      : menuRect?.left ?? 12;
     const left = Math.max(12, Math.min(preferredLeft, viewportWidth - width - 12));
-    const anchorTop = messageActionsPosition?.top ?? viewportHeight / 2;
+    const anchorTop = triggerRect?.top ?? menuRect?.top ?? viewportHeight / 2;
+    const topAbove = anchorTop - height - 8;
+    const topBelow = (triggerRect?.bottom ?? menuRect?.bottom ?? 0) + 8;
     const top =
-      anchorTop >= height + 12
-        ? anchorTop - height - 8
-        : Math.min(anchorTop + 150, viewportHeight - height - 12);
+      topAbove >= 8
+        ? topAbove
+        : Math.max(8, Math.min(topBelow, viewportHeight - height - 8));
 
     return {
       position: 'fixed',
@@ -547,7 +579,27 @@ export default function ChatArea({
       width: `${width}px`,
       maxHeight: `${height}px`,
     };
-  };
+  }, []);
+
+  useLayoutEffect(() => {
+    const anchor = messageActionAnchorRef.current;
+    const menu = messageActionsMenuRef.current;
+    if (!activeMessageActionsId || !anchor || !menu) return;
+    setMessageActionsPosition(
+      getMessageActionsPosition(
+        anchor.rect,
+        anchor.isMe,
+        menu.offsetWidth,
+        menu.offsetHeight
+      )
+    );
+  }, [activeMessageActionsId, getMessageActionsPosition]);
+
+  useLayoutEffect(() => {
+    if (reactionPickerMessageId && reactionPickerElementRef.current) {
+      setReactionPickerPosition(getReactionPickerPosition());
+    }
+  }, [getReactionPickerPosition, reactionPickerMessageId]);
 
   const handleMessagePointerDown = (event, msg) => {
     if (
@@ -575,8 +627,13 @@ export default function ChatArea({
     longPressTimerRef.current = setTimeout(() => {
       if (touchStartRef.current?.pointerId !== pointerId) return;
       didLongPressRef.current = true;
+      messageActionAnchorRef.current = {
+        rect: touchStartRef.current.rect,
+        isMe: touchStartRef.current.isMe,
+      };
       setActiveMessageActionsId(msg.id);
       setReactionPickerMessageId(null);
+      setReactionPickerPosition(null);
       setMessageActionsPosition(
         getMessageActionsPosition(touchStartRef.current.rect, touchStartRef.current.isMe)
       );
@@ -1193,7 +1250,7 @@ export default function ChatArea({
                 ) : selectedUser?.status === 'online' ? (
                   'Online'
                 ) : selectedUser?.lastSeen ? (
-                  `Last seen ${selectedUser.lastSeen}`
+                  `Last active ${selectedUser.lastSeen}`
                 ) : (
                   'Offline'
                 )}
@@ -1499,14 +1556,12 @@ export default function ChatArea({
                       onContextMenu={(event) => {
                         if (msg.id.startsWith('temp_')) return;
                         event.preventDefault();
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        messageActionAnchorRef.current = { rect, isMe };
                         setActiveMessageActionsId(msg.id);
                         setReactionPickerMessageId(null);
-                        setMessageActionsPosition(
-                          getMessageActionsPosition(
-                            event.currentTarget.getBoundingClientRect(),
-                            isMe
-                          )
-                        );
+                        setReactionPickerPosition(null);
+                        setMessageActionsPosition(getMessageActionsPosition(rect, isMe));
                       }}
                       onPointerDown={(event) => handleMessagePointerDown(event, msg)}
                       onClick={(event) => {
@@ -1723,95 +1778,107 @@ export default function ChatArea({
                         </div>
                       )}
                     </div>
-                    {activeMessageActionsId === msg.id && (
-                      <div
-                        className={`message-context-menu ${isMe ? 'sent-context-menu' : ''}`}
-                        role="menu"
-                        style={
-                          messageActionsPosition
-                            ? {
-                                left: `${messageActionsPosition.left}px`,
-                                top: `${messageActionsPosition.top}px`,
-                              }
-                            : undefined
-                        }
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          didLongPressRef.current = false;
-                        }}
-                      >
-                        <div className="message-reaction-options">
-                          {displayedReactionEmojis.map((emoji) => (
+                    {activeMessageActionsId === msg.id &&
+                      createPortal(
+                        <div
+                          ref={messageActionsMenuRef}
+                          className={`message-context-menu ${isMe ? 'sent-context-menu' : ''}`}
+                          role="menu"
+                          style={
+                            messageActionsPosition
+                              ? {
+                                  left: `${messageActionsPosition.left}px`,
+                                  top: `${messageActionsPosition.top}px`,
+                                }
+                              : undefined
+                          }
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            didLongPressRef.current = false;
+                          }}
+                        >
+                          <div className="message-reaction-options">
+                            {displayedReactionEmojis.map((emoji) => (
+                              <button
+                                type="button"
+                                key={emoji}
+                                onClick={() => {
+                                  selectMessageReaction(msg.id, emoji);
+                                }}
+                                aria-label={`React ${emoji}`}
+                              >
+                                {emoji}
+                              </button>
+                            ))}
                             <button
+                              ref={reactionPickerTriggerRef}
                               type="button"
-                              key={emoji}
+                              className="message-reaction-more"
                               onClick={() => {
-                                selectMessageReaction(msg.id, emoji);
+                                const isOpen = reactionPickerMessageId === msg.id;
+                                setReactionPickerMessageId(isOpen ? null : msg.id);
+                                setReactionPickerPosition(
+                                  isOpen ? null : getReactionPickerPosition()
+                                );
                               }}
-                              aria-label={`React ${emoji}`}
+                              aria-label="Choose another reaction"
+                              aria-expanded={reactionPickerMessageId === msg.id}
                             >
-                              {emoji}
+                              <Plus size={18} />
                             </button>
-                          ))}
-                          <button
-                            ref={reactionPickerTriggerRef}
-                            type="button"
-                            className="message-reaction-more"
-                            onClick={() =>
-                              setReactionPickerMessageId((activeId) =>
-                                activeId === msg.id ? null : msg.id
-                              )
-                            }
-                            aria-label="Choose another reaction"
-                            aria-expanded={reactionPickerMessageId === msg.id}
-                          >
-                            <Plus size={18} />
-                          </button>
-                        </div>
-                        {reactionPickerMessageId === msg.id && (
-                          <EmojiPicker
-                            className="message-reaction-emoji-picker"
-                            style={getReactionPickerPosition()}
-                            triggerRef={reactionPickerTriggerRef}
-                            onSelectEmoji={(emoji) => selectMessageReaction(msg.id, emoji)}
-                            onClose={() => setReactionPickerMessageId(null)}
-                          />
-                        )}
-                        <div className="message-action-options">
-                          <button
-                            type="button"
-                            onClick={() => handleReplyToMessage(msg)}
-                            title="Reply"
-                          >
-                            <Reply size={15} />
-                            Reply
-                          </button>
-                          {isMe && onEditMessage && (
+                          </div>
+                          {reactionPickerMessageId === msg.id && (
+                            <EmojiPicker
+                              className="message-reaction-emoji-picker"
+                              style={reactionPickerPosition}
+                              triggerRef={reactionPickerTriggerRef}
+                              elementRef={reactionPickerElementRef}
+                              onSelectEmoji={(emoji) => selectMessageReaction(msg.id, emoji)}
+                              onClose={() => {
+                                setReactionPickerMessageId(null);
+                                setReactionPickerPosition(null);
+                              }}
+                            />
+                          )}
+                          <div className="message-action-options">
                             <button
                               type="button"
-                              onClick={() => handleEditThisMessage(msg)}
-                              title="Edit message"
+                              onClick={() => handleReplyToMessage(msg)}
+                              title="Reply"
                             >
-                              <Pencil size={14} />
-                              Edit
+                              <Reply size={15} />
+                              Reply
                             </button>
-                          )}
-                          {onDeleteMessage && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setConfirmDeleteMsgId(msg.id);
-                                setActiveMessageActionsId(null);
-                              }}
-                              title="Delete message"
-                            >
-                              <Trash2 size={14} />
-                              Delete
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    )}
+                            {isMe && onEditMessage && (
+                              <button
+                                type="button"
+                                onClick={() => handleEditThisMessage(msg)}
+                                title="Edit message"
+                              >
+                                <Pencil size={14} />
+                                Edit
+                              </button>
+                            )}
+                            {onDeleteMessage && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setConfirmDeleteMsgId(msg.id);
+                                  setReactionPickerMessageId(null);
+                                  setActiveMessageActionsId(null);
+                                  setReactionPickerPosition(null);
+                                }}
+                                title="Delete message"
+                              >
+                                <Trash2 size={14} />
+                                Delete
+                              </button>
+                            )}
+                          </div>
+                        </div>,
+                        document.body,
+                        `message-actions-${msg.id}`
+                      )}
                   </div>
                 );
               })}

@@ -18,6 +18,7 @@ export async function getUsers(req, res, next) {
       id: u.id,
       username: u.username,
       createdAt: u.createdAt,
+      lastSeen: u.lastSeen,
     }));
 
     return res.status(200).json({

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import {
   Smile,
   ThumbsUp,
@@ -141,9 +141,17 @@ export default function EmojiPicker({
   triggerRef,
   className = '',
   style,
+  elementRef,
 }) {
   const [activeTab, setActiveTab] = useState('smileys');
   const pickerRef = useRef(null);
+  const setPickerElement = useCallback(
+    (element) => {
+      pickerRef.current = element;
+      if (elementRef) elementRef.current = element;
+    },
+    [elementRef]
+  );
 
   // Close on outside click or Escape key
   useEffect(() => {
@@ -179,7 +187,7 @@ export default function EmojiPicker({
   return (
     <div
       className={`lanova-emoji-picker${className ? ` ${className}` : ''}`}
-      ref={pickerRef}
+      ref={setPickerElement}
       role="dialog"
       aria-label="Emoji picker"
       style={style}

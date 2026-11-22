@@ -106,7 +106,7 @@ export default function ChatUserList({
                       {user.status === 'online'
                         ? 'Online'
                         : user.lastSeen
-                          ? `Last seen ${user.lastSeen}`
+                          ? `Last active ${user.lastSeen}`
                           : 'Offline'}
                     </span>
                   </div>

@@ -433,6 +433,18 @@ async function runTests() {
 
     const offlineStatus = await userBOfflinePromise;
     assert(offlineStatus.userId === userBId && offlineStatus.status === 'offline', 'User A received status update that User B is offline');
+    assert(
+      Boolean(offlineStatus.lastSeen && !Number.isNaN(Date.parse(offlineStatus.lastSeen))),
+      'Offline status includes a valid last-active timestamp'
+    );
+    const usersAfterDisconnect = await request('/api/users', {
+      headers: { Authorization: `Bearer ${tokenA}` },
+    });
+    const offlineUser = usersAfterDisconnect.data.users.find((listedUser) => listedUser.id === userBId);
+    assert(
+      Boolean(offlineUser?.lastSeen && !Number.isNaN(Date.parse(offlineUser.lastSeen))),
+      'User list returns the persisted last-active timestamp'
+    );
 
     // Send offline message while User B is disconnected
     const textMsg2 = 'This is an offline message while User B is away.';

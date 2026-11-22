@@ -17,6 +17,10 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: [true, 'Password hash is required'],
     },
+    lastSeen: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
