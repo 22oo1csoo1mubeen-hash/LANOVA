@@ -30,10 +30,11 @@ backend/
 │   │   └── userController.js     # Registered user directory (excluding current user)
 │   ├── middleware/
 │   │   ├── authMiddleware.js     # Express JWT bearer token validation
-│   │   ├── uploadMiddleware.js   # Multer storage configuration for images (15MB) & any file extension (100MB)
+│   │   ├── uploadMiddleware.js   # Multer storage configuration for images (10MB) & any file extension (100MB)
 │   │   └── errorMiddleware.js    # 404 handler and centralized error pipeline
 │   ├── models/
 │   │   ├── Message.js            # Mongoose schema for persistent private messages (text, image, file)
+│   │   ├── Conversation.js       # Shared conversation metadata and wallpaper
 │   │   └── User.js               # Mongoose schema for user accounts & bcrypt hashing
 │   ├── routes/
 │   │   ├── authRoutes.js         # Routes for /api/auth (register, login, me)
@@ -43,7 +44,7 @@ backend/
 │   ├── sockets/
 │   │   ├── connectionManager.js  # In-memory registry of active authenticated sockets
 │   │   ├── socketAuth.js         # Token extraction & verification for WebSocket handshake
-│   │   ├── socketHandlers.js     # Event dispatchers (message:send, users:online, presence)
+│   │   ├── socketHandlers.js     # Event dispatchers (messaging, receipts, typing, presence)
 │   │   └── socketServer.js       # WebSocketServer setup, ping/pong heartbeats & lifecycle
 │   ├── utils/
 │   │   ├── generateToken.js      # JWT signing utility
@@ -56,7 +57,7 @@ backend/
 │   ├── chat.test.js              # Automated tests for WebSocket messaging & persistence (Milestone 2)
 │   ├── network.test.js           # Automated tests for LAN IP detection & telemetry (Milestone 3)
 │   ├── image_upload.test.js      # Automated tests for image uploading, storage & disk cleanup
-│   └── file_and_chat_fixes.test.js # Automated tests for generic file sharing, uncapped history & deletions
+│   └── file_and_chat_fixes.test.js # Automated tests for generic file sharing, paginated history & deletions
 ├── .env.example                  # Environment variables template
 ├── package.json                  # Dependencies and npm scripts
 └── README.md                     # This backend documentation file
@@ -79,19 +80,21 @@ backend/
 - **Multi-Type Message Delivery**: Routes text, image, and generic file messages in real-time. Automatically acknowledges message receipt and database persistence to the sender.
 - **Message Interactions**: Supports sender-only edits, participant emoji reactions, and reply snapshots; edits and reactions synchronize over WebSocket.
 - **Typing & Read Receipts**: Relays ephemeral typing events and persists sent, delivered, and read timestamps for WhatsApp-style message status.
+- **Shared Conversation Wallpaper**: Stores the wallpaper setting per participant pair in MongoDB and its image in GridFS. Updates are synchronized to both participants and survive device changes and backend restarts.
 - **Real-Time Peer Sync for Deletions**: Broadcasts `conversation:cleared` and `message:deleted` events so peer chat windows update instantaneously without refreshing.
 - **Presence Broadcasts**: Automatically broadcasts `user:status` events (`online` / `offline`) to all active peers on connection and disconnection.
 - **Offline Message Persistence**: Messages sent to an offline user are safely stored in MongoDB; recipient receives them upon opening the conversation.
 
 ### 3. Image & Universal File Sharing (LAN-Optimized)
 - **WhatsApp-Style File Sharing**: Supports sharing files of **any file extension** (`.pdf`, `.docx`, `.xlsx`, `.zip`, `.mp3`, `.mp4`, `.apk`, code, etc.) up to **100MB** directly over the local network.
-- **Image Sharing**: High-resolution image uploads (`png`, `jpg`, `gif`, `webp`, `svg`, `bmp`) up to 15MB with optional captions.
+- **Image Sharing**: High-resolution image uploads (`png`, `jpg`, `gif`, `webp`, `svg`, `bmp`) up to 10MB with optional captions.
 - **Automatic Disk Cleanup**: When a message or an entire conversation is deleted, associated media files stored on disk in `uploads/` are automatically deleted to prevent orphaned files.
 
-### 4. Reliable Uncapped Message Storage
-- **Unbounded History**: Eliminated artificial message caps and limit cutoffs; complete conversations are stored in MongoDB and returned in exact chronological order.
+### 4. Reliable, Paginated Message History
+- **No Conversation Message Cap**: The API returns recent messages in cursor-based pages and loads older messages on demand. Pagination limits each response, not the total history; MongoDB capacity and retention determine practical storage limits.
+- **Stable Ordering**: Pages use chronological ordering with message ID tie-breaking to avoid gaps or duplicates.
 - **Granular Deletions**: Supports both clearing an entire conversation (`DELETE /api/messages/:userId`) and deleting individual messages (`DELETE /api/messages/item/:messageId`).
-- **History Receipts**: Retrieving a conversation marks pending incoming messages delivered; the client marks them read only while that conversation is visible.
+- **History Receipts**: Retrieving a page marks its pending incoming messages delivered; the client marks them read only while that conversation is visible.
 
 ### 5. Network Detection & LAN Connectivity
 - **Physical Adapter Detection**: Uses `os.networkInterfaces()` in `networkUtils.js` to inspect active physical adapters (Ethernet, Wi-Fi), automatically excluding internal loopback and virtual adapters (VMware, VirtualBox, WSL).
@@ -183,8 +186,11 @@ Lists all registered users except the requesting caller.
   ```
 
 #### `GET /api/messages/:userId`
-Retrieves chronological message history between caller and target user without artificial caps or limits.
-- **Query Params**: `?limit=50` (optional, omits limit by default to fetch all conversation history)
+Retrieves a chronological page of messages and the shared wallpaper for the conversation.
+- **Query Params**:
+  - `?limit=50` (optional; defaults to 50 and is capped at 100 per response)
+  - `?before=<messageId>` (optional; fetch the page preceding this message)
+  - `?limit=all` (explicit full-history export; avoid for normal chat loading)
 - **Response `200 OK`**:
   ```json
   {
@@ -199,9 +205,22 @@ Retrieves chronological message history between caller and target user without a
         "readAt": null,
         "createdAt": "2026-10-04T08:47:00.000Z"
       }
-    ]
+    ],
+    "hasMore": true,
+    "nextCursor": "6701...ef",
+    "wallpaper": null,
+    "wallpaperUpdatedAt": null
   }
   ```
+
+#### `PUT /api/messages/:userId/wallpaper`
+Uploads and sets the shared wallpaper for the conversation. Both participants see updates in real time; the setting is restored from MongoDB on every device.
+- **Request**: `multipart/form-data` with an `image` file (PNG, JPG, GIF, WebP, SVG, BMP; up to 10MB).
+- **Response**: `{ "wallpaper": { "url": "/uploads/...", "fileName": "...", "updatedBy": "...", "updatedAt": "..." } }`
+- **Storage**: Wallpaper image is persisted in MongoDB GridFS.
+
+#### `DELETE /api/messages/:userId/wallpaper`
+Removes the shared wallpaper for both participants.
 
 #### `PUT /api/messages/item/:messageId`
 Edits a message authored by the authenticated user. Content must contain 1–5000 characters.
@@ -216,7 +235,7 @@ Toggles a supported reaction (`👍`, `❤️`, `😂`, `😮`, `😢`, or `🙏
 - **Event**: Sends `message:reaction` to connected participants.
 
 #### `POST /api/messages/upload`
-Uploads an image (PNG, JPG, GIF, WebP, SVG, BMP up to 15MB) with optional caption for private LAN sharing.
+Uploads an image (PNG, JPG, GIF, WebP, SVG, BMP up to 10MB) with optional caption for private LAN sharing.
 - **Request**: `multipart/form-data` with fields `image` (binary file) and `caption` (optional string).
 - **Response `201 Created`**:
   ```json
@@ -439,12 +458,15 @@ Contains the edited message ID, participants, new content, and `editedAt`.
 Contains the message ID, participants, and the complete current reaction list.
 
 #### 7. `messages:receipt` (Delivery / Read Receipt)
-Delivery receipts contain `messageIds`; read receipts contain `lastReadMessageId` to represent all messages read up to that point. Both include the `delivered` or `read` status, participants, and receipt timestamp.
+Live delivery receipts contain `messageIds`; history delivery receipts use `lastDeliveredMessageId` to represent a page delivered through that message. Read receipts use `lastReadMessageId` to represent messages read through that point. All include the status, participants, and timestamp.
 
 #### 8. `typing:start` and `typing:stop` (Typing Indicator)
 Relays the typing user's ID to the recipient. The frontend clears stale typing state after a short timeout.
 
-#### 9. `user:status` (Presence Broadcast)
+#### 9. `conversation:wallpaper` (Shared Wallpaper Update)
+Broadcasts the updated wallpaper or `null` to both participants after a wallpaper is set, replaced, or removed.
+
+#### 10. `user:status` (Presence Broadcast)
 ```json
 {
   "type": "user:status",
@@ -455,7 +477,7 @@ Relays the typing user's ID to the recipient. The frontend clears stale typing s
 }
 ```
 
-#### 10. `users:online` (Online Snapshot)
+#### 11. `users:online` (Online Snapshot)
 ```json
 {
   "type": "users:online",
@@ -465,7 +487,7 @@ Relays the typing user's ID to the recipient. The frontend clears stale typing s
 }
 ```
 
-#### 11. `error`
+#### 12. `error`
 ```json
 {
   "type": "error",
@@ -500,20 +522,20 @@ CLIENT_URL=http://localhost:5173,http://localhost:5174
 
 ## 🧪 Automated Testing
 
-The backend includes **173 checks across 6 standalone test suites** built with Node's native assert capabilities:
+The backend includes **186 checks across 6 standalone test suites** built with Node's native assert capabilities:
 
 ```bash
 cd backend
 
-# Run all test suites sequentially (173 checks):
+# Run all test suites sequentially (186 checks):
 npm run test:all
 
 # Or run individual suites:
 npm run test           # Auth, password hashing, user listings (24 checks)
-npm run test:chat      # WebSocket messaging, edits, reactions, replies & receipts (58 checks)
+npm run test:chat      # WebSocket messaging, edits, reactions, replies, shared wallpaper & receipts (67 checks)
 npm run test:network   # Interface inspection, IP detection, telemetry (29 checks)
 npm run test:image     # Image uploads, lightbox support & media cleanup (25 checks)
-npm run test:files     # Generic file sharing, history beyond 100 messages & deletions (35 checks)
+npm run test:files     # Generic file sharing, cursor-paginated history & deletions (39 checks)
 npm run test:gridfs    # GridFS persistence (2 checks)
 ```
 

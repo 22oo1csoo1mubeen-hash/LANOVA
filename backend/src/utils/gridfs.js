@@ -19,23 +19,22 @@ export function getGridFSBucket() {
 export async function saveFileToGridFS(filename, localFilePath, mimeType) {
   try {
     const gfs = getGridFSBucket();
-    if (!gfs || !fs.existsSync(localFilePath)) return;
+    if (!gfs || !fs.existsSync(localFilePath)) return false;
 
-    return new Promise((resolve, reject) => {
+    return await new Promise((resolve, reject) => {
       const uploadStream = gfs.openUploadStream(filename, {
         contentType: mimeType || 'application/octet-stream',
       });
+      const sourceStream = fs.createReadStream(localFilePath);
 
-      fs.createReadStream(localFilePath)
-        .pipe(uploadStream)
-        .on('error', (err) => {
-          console.warn(`[GridFS] Error streaming file to GridFS (${filename}):`, err.message);
-          reject(err);
-        })
-        .on('finish', resolve);
+      sourceStream.on('error', reject);
+      uploadStream.on('error', reject);
+      uploadStream.on('finish', () => resolve(true));
+      sourceStream.pipe(uploadStream);
     });
   } catch (err) {
     console.warn(`[GridFS] Failed to persist ${filename} to GridFS:`, err.message);
+    return false;
   }
 }
 

@@ -1,4 +1,6 @@
 import WebSocket from 'ws';
+import fs from 'fs';
+import path from 'path';
 
 /**
  * LANOVA Backend Milestone 2 Automated Test Suite
@@ -13,6 +15,10 @@ import WebSocket from 'ws';
 
 const BASE_URL = 'http://localhost:5000';
 const WS_URL = 'ws://localhost:5000/ws';
+const TINY_PNG_BUFFER = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=',
+  'base64'
+);
 
 let passed = 0;
 let failed = 0;
@@ -176,6 +182,62 @@ async function runTests() {
     const typingStop = await typingStopPromise;
     assert(typingStop.senderId === userAId, 'Typing stopped event is relayed to the peer');
 
+    const wallpaperForm = new FormData();
+    wallpaperForm.append(
+      'image',
+      new Blob([TINY_PNG_BUFFER], { type: 'image/png' }),
+      'shared-wallpaper.png'
+    );
+    const wallpaperEventPromise = waitForEvent(wsB, 'conversation:wallpaper');
+    const wallpaperResponse = await fetch(`${BASE_URL}/api/messages/${userBId}/wallpaper`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${tokenA}` },
+      body: wallpaperForm,
+    });
+    const wallpaperData = await wallpaperResponse.json();
+    assert(wallpaperResponse.status === 200, 'Conversation wallpaper is saved successfully');
+    assert(Boolean(wallpaperData.wallpaper?.url), 'Saved wallpaper has a persistent media URL');
+    const wallpaperEvent = await wallpaperEventPromise;
+    assert(
+      wallpaperEvent.wallpaper.url === wallpaperData.wallpaper.url,
+      'The other participant receives wallpaper updates in real time'
+    );
+    const wallpaperDiskPath = path.resolve('uploads', path.basename(wallpaperData.wallpaper.url));
+    assert(fs.existsSync(wallpaperDiskPath), 'Wallpaper is staged in the upload store');
+    fs.unlinkSync(wallpaperDiskPath);
+    const persistentWallpaperResponse = await fetch(
+      `${BASE_URL}${wallpaperData.wallpaper.url}`
+    );
+    assert(
+      persistentWallpaperResponse.status === 200 &&
+        persistentWallpaperResponse.headers.get('content-type')?.includes('image/png'),
+      'Wallpaper image is recovered from GridFS for another device'
+    );
+
+    const sharedWallpaperHistory = await request(`/api/messages/${userAId}?limit=1`, {
+      headers: { Authorization: `Bearer ${tokenB}` },
+    });
+    assert(
+      sharedWallpaperHistory.data.wallpaper?.url === wallpaperData.wallpaper.url,
+      'The other participant retrieves the same wallpaper from conversation history'
+    );
+
+    const removeWallpaper = await request(`/api/messages/${userAId}/wallpaper`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${tokenB}` },
+    });
+    assert(
+      removeWallpaper.status === 200 && removeWallpaper.data.wallpaper === null,
+      'Either participant can remove the shared conversation wallpaper'
+    );
+    const clearedWallpaperHistory = await request(`/api/messages/${userAId}`, {
+      headers: { Authorization: `Bearer ${tokenB}` },
+    });
+    assert(
+      clearedWallpaperHistory.data.wallpaper === null,
+      'Wallpaper removal is persisted for both participants'
+    );
+
     // 7. Test Real-Time Private Messaging (User A -> User B)
     const textMsg1 = 'Hello User B! Welcome to LANOVA.';
     const sentPromiseA = waitForEvent(wsA, 'message:sent');
@@ -336,9 +398,15 @@ async function runTests() {
     const offlineAck = await offlineSentPromise;
     assert(offlineAck.status === 'saved' && offlineAck.content === textMsg2, 'Offline message saved successfully in MongoDB');
 
+    const offlineDeliveryReceiptPromise = waitForEvent(wsA, 'messages:receipt');
     const receiverHistory = await request(`/api/messages/${userAId}`, {
       headers: { Authorization: `Bearer ${tokenB}` },
     });
+    const offlineDeliveryReceipt = await offlineDeliveryReceiptPromise;
+    assert(
+      offlineDeliveryReceipt.lastDeliveredMessageId === offlineAck.id,
+      'Paginated history sends a compact delivery boundary for offline messages'
+    );
     const deliveredOfflineMessage = receiverHistory.data.messages.find(
       (message) => message.id === offlineAck.id
     );

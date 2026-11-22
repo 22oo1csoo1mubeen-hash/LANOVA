@@ -905,6 +905,17 @@
   gap: 12px;
 }
 
+.chat-history-loader {
+  align-self: center;
+  padding: 6px 12px;
+  border: 1px solid rgba(194, 241, 53, 0.18);
+  border-radius: 999px;
+  color: var(--color-text-secondary);
+  background: rgba(14, 24, 16, 0.78);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
 /* Floating scroll to bottom down-arrow button (WhatsApp style) */
 .chat-scroll-bottom-btn {
   position: absolute;

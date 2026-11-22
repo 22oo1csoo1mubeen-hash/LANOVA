@@ -7,6 +7,8 @@ import {
   deleteMessage,
   editMessage,
   toggleMessageReaction,
+  setConversationWallpaper,
+  removeConversationWallpaper,
 } from '../controllers/messageController.js';
 import { authenticateToken } from '../middleware/authMiddleware.js';
 import { handleImageUpload, handleFileUpload } from '../middleware/uploadMiddleware.js';
@@ -23,6 +25,10 @@ router.post('/upload-file', authenticateToken, handleFileUpload, uploadFile);
 router.delete('/item/:messageId', authenticateToken, deleteMessage);
 router.put('/item/:messageId', authenticateToken, editMessage);
 router.post('/item/:messageId/reactions', authenticateToken, toggleMessageReaction);
+
+// Shared, persistent wallpaper for a one-to-one conversation
+router.put('/:userId/wallpaper', authenticateToken, handleImageUpload, setConversationWallpaper);
+router.delete('/:userId/wallpaper', authenticateToken, removeConversationWallpaper);
 
 // Retrieve conversation history with a specific user
 router.get('/:userId', authenticateToken, getConversation);

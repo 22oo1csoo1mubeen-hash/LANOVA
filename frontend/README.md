@@ -26,9 +26,9 @@ It features zero third-party cloud requirements, dynamic host IP detection, auto
 - **📸 High-Resolution Photo Sharing**: Share images with live upload progress, staging preview, captions, and responsive thumbnails with fullscreen modal viewing.
 - **💬 Interactive Messages**: Clickable web/video links, emoji reactions, sender-only message editing, and replies by long-press/context menu or swipe.
 - **⌨️ Live Typing & Read Receipts**: Show a themed typing indicator and sent, delivered, and read checkmarks; unread messages are marked read only while their chat is visible.
-- **🖼️ Per-Chat Wallpaper**: Set an image for a single conversation; it persists in this browser and is scoped to the signed-in user and chat partner.
+- **🖼️ Shared Chat Wallpaper**: Set one wallpaper for the conversation. Both participants see it immediately, and it persists across browsers and devices.
 - **🗑️ Real-Time Chat & Message Deletion**: "Delete Chat" clears the entire conversation history with real-time peer sync and disk media cleanup; single message deletion on hover with confirmation modals.
-- **💾 Uncapped Message History**: Displays complete chronological conversation history from MongoDB without artificial caps or missing messages.
+- **💾 Uncapped Message History**: Loads recent messages first and fetches older pages while scrolling. Pagination is per request; there is no fixed conversation message-count cutoff.
 - **🟢 Live User Presence**: Real-time indicators showing online and offline states for all registered network peers.
 - **🔍 Dynamic LAN API Resolution**: Automatically resolves the backend server address (`http://<LAN_IP>:5000`) based on the client browser's current hostname—no manual IP reconfiguration needed when accessing from other phones or laptops on Wi-Fi!
 - **🌐 Network Monitor Dashboard**: Interactive telemetry page displaying host LAN IPv4 address, listening port, subnet mask, active peer counts, connection status badges, and 1-click shareable links.

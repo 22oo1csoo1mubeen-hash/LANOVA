@@ -136,20 +136,39 @@ async function runTests() {
       await ackPromise;
     }
 
-    const historyRes = await request(`/api/messages/${userBId}`, {
+    let historyRes = await request(`/api/messages/${userBId}?limit=50`, {
       headers: { Authorization: `Bearer ${tokenA}` },
     });
     assert(historyRes.status === 200, 'Conversation history query succeeded');
     assert(
-      historyRes.data.messages.length === totalMsgs,
-      `All ${totalMsgs} messages returned (not capped at 100)`
+      historyRes.data.messages.length === 50 && historyRes.data.hasMore,
+      'History returns a recent page and indicates older messages are available'
+    );
+
+    let allMessages = historyRes.data.messages;
+    while (historyRes.data.hasMore) {
+      historyRes = await request(
+        `/api/messages/${userBId}?limit=50&before=${historyRes.data.nextCursor}`,
+        { headers: { Authorization: `Bearer ${tokenA}` } }
+      );
+      assert(historyRes.status === 200, 'Older history page loads using its cursor');
+      allMessages = [...historyRes.data.messages, ...allMessages];
+    }
+
+    assert(
+      allMessages.length === totalMsgs,
+      `All ${totalMsgs} messages are available across pages without a conversation cap`
     );
     assert(
-      historyRes.data.messages[0].content === 'Message sequence #1',
+      new Set(allMessages.map((message) => message.id)).size === totalMsgs,
+      'History pages contain no duplicate messages'
+    );
+    assert(
+      allMessages[0].content === 'Message sequence #1',
       'First message preserved chronologically'
     );
     assert(
-      historyRes.data.messages[totalMsgs - 1].content === `Message sequence #${totalMsgs}`,
+      allMessages[totalMsgs - 1].content === `Message sequence #${totalMsgs}`,
       `Last message sequence #${totalMsgs} is returned and displayed`
     );
 

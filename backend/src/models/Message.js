@@ -94,8 +94,8 @@ const messageSchema = new mongoose.Schema(
 );
 
 // Compound indexes for rapid conversation history retrieval between two users
-messageSchema.index({ sender: 1, receiver: 1, createdAt: 1 });
-messageSchema.index({ receiver: 1, sender: 1, createdAt: 1 });
+messageSchema.index({ sender: 1, receiver: 1, createdAt: 1, _id: 1 });
+messageSchema.index({ receiver: 1, sender: 1, createdAt: 1, _id: 1 });
 messageSchema.index({ sender: 1, receiver: 1, deliveredAt: 1 });
 messageSchema.index({ sender: 1, receiver: 1, readAt: 1 });
 

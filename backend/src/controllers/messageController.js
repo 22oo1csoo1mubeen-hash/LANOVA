@@ -2,6 +2,7 @@ import path from 'path';
 import mongoose from 'mongoose';
 import { Message } from '../models/Message.js';
 import { User } from '../models/User.js';
+import { Conversation, getConversationKey } from '../models/Conversation.js';
 import { deleteUploadedFile } from '../middleware/uploadMiddleware.js';
 import { connectionManager } from '../sockets/connectionManager.js';
 import { saveFileToGridFS } from '../utils/gridfs.js';
@@ -27,6 +28,9 @@ export async function getConversation(req, res, next) {
     if (!otherUser) {
       return res.status(404).json({ message: 'User not found' });
     }
+    if (otherUserId === currentUserId) {
+      return res.status(400).json({ message: 'Cannot open a conversation with yourself' });
+    }
 
     const queryFilter = {
       $or: [
@@ -35,48 +39,216 @@ export async function getConversation(req, res, next) {
       ],
     };
 
-    const pendingDeliveries = await Message.find({
-      sender: otherUserId,
-      receiver: currentUserId,
-      deliveredAt: null,
-    })
-      .select('_id')
-      .lean();
+    const isUnboundedRequest = req.query.limit === 'all';
+    const requestedLimit = Number.parseInt(req.query.limit, 10);
+    const limit = isUnboundedRequest
+      ? null
+      : Math.min(Math.max(requestedLimit || 50, 1), 100);
+    let pageFilter = queryFilter;
+
+    if (req.query.before) {
+      if (!mongoose.Types.ObjectId.isValid(req.query.before) || isUnboundedRequest) {
+        return res.status(400).json({ message: 'Invalid message history cursor' });
+      }
+
+      const cursorMessage = await Message.findOne({
+        _id: req.query.before,
+        ...queryFilter,
+      })
+        .select('_id createdAt')
+        .lean();
+      if (!cursorMessage) {
+        return res.status(400).json({ message: 'Message history cursor is not in this conversation' });
+      }
+      pageFilter = {
+        $and: [
+          queryFilter,
+          {
+            $or: [
+              { createdAt: { $lt: cursorMessage.createdAt } },
+              {
+                createdAt: cursorMessage.createdAt,
+                _id: { $lt: cursorMessage._id },
+              },
+            ],
+          },
+        ],
+      };
+    }
+
+    const recentQuery = Message.find(pageFilter).sort({ createdAt: -1, _id: -1 });
+    if (!isUnboundedRequest) recentQuery.limit(limit + 1);
+    const recentMessages = await recentQuery;
+    const hasMore = !isUnboundedRequest && recentMessages.length > limit;
+    const messages = (isUnboundedRequest ? recentMessages : recentMessages.slice(0, limit)).reverse();
+
+    const pendingDeliveries = messages.filter(
+      (message) => message.sender.toString() === otherUserId && !message.deliveredAt
+    );
     if (pendingDeliveries.length > 0) {
       const deliveredAt = new Date();
       const messageIds = pendingDeliveries.map((message) => message._id);
       await Message.updateMany(
-        { _id: { $in: messageIds }, deliveredAt: null },
+        { _id: { $in: messageIds }, receiver: currentUserId, deliveredAt: null },
         { $set: { deliveredAt } }
       );
+      for (const message of pendingDeliveries) message.deliveredAt = deliveredAt;
       connectionManager.sendToUser(otherUserId, {
         type: 'messages:receipt',
         payload: {
           senderId: otherUserId,
           receiverId: currentUserId,
-          messageIds: messageIds.map((id) => id.toString()),
+          lastDeliveredMessageId: pendingDeliveries[pendingDeliveries.length - 1]._id.toString(),
           status: 'delivered',
           timestamp: deliveredAt.toISOString(),
         },
       });
     }
 
-    let messages;
-    // If a specific limit is provided, fetch the most recent messages in chronological order
-    if (req.query.limit && req.query.limit !== 'all') {
-      const limit = Math.max(1, parseInt(req.query.limit, 10) || 500);
-      const recent = await Message.find(queryFilter)
-        .sort({ createdAt: -1, _id: -1 })
-        .limit(limit);
-      messages = recent.reverse();
-    } else {
-      // Default: retrieve complete conversation history chronologically (no arbitrary cutoff)
-      messages = await Message.find(queryFilter).sort({ createdAt: 1, _id: 1 });
-    }
+    const conversation = await Conversation.findOne({
+      conversationKey: getConversationKey(currentUserId, otherUserId),
+    })
+      .select('wallpaper wallpaperUpdatedAt')
+      .lean();
 
     return res.status(200).json({
       messages: messages.map((m) => m.toJSON()),
+      hasMore,
+      nextCursor: hasMore && messages.length ? messages[0]._id.toString() : null,
+      wallpaper: conversation?.wallpaper?.url ? conversation.wallpaper : null,
+      wallpaperUpdatedAt: conversation?.wallpaperUpdatedAt || null,
     });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function setConversationWallpaper(req, res, next) {
+  let wallpaperSaved = false;
+  try {
+    const currentUserId = req.user.id;
+    const { userId: otherUserId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(otherUserId) || otherUserId === currentUserId) {
+      return res.status(400).json({ message: 'A valid conversation partner is required' });
+    }
+    if (!req.file) {
+      return res.status(400).json({ message: 'No wallpaper image uploaded' });
+    }
+
+    const otherUser = await User.findById(otherUserId).select('_id');
+    if (!otherUser) {
+      deleteUploadedFile(`/uploads/${req.file.filename}`);
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const fileUrl = `/uploads/${req.file.filename}`;
+    const persisted = await saveFileToGridFS(
+      req.file.filename,
+      req.file.path,
+      req.file.mimetype
+    );
+    if (!persisted) {
+      deleteUploadedFile(fileUrl);
+      return res.status(503).json({ message: 'Wallpaper storage is temporarily unavailable' });
+    }
+
+    const conversationKey = getConversationKey(currentUserId, otherUserId);
+    const previousConversation = await Conversation.findOne({ conversationKey })
+      .select('wallpaper.url')
+      .lean();
+    const updatedAt = new Date();
+    const conversation = await Conversation.findOneAndUpdate(
+      { conversationKey },
+      {
+        $setOnInsert: {
+          conversationKey,
+          participants: [currentUserId, otherUserId],
+        },
+        $set: {
+          wallpaper: {
+            url: fileUrl,
+            fileName: req.file.originalname,
+            updatedBy: currentUserId,
+            updatedAt,
+          },
+          wallpaperUpdatedAt: updatedAt,
+        },
+      },
+      { new: true, upsert: true, runValidators: true, setDefaultsOnInsert: true }
+    ).select('wallpaper');
+    wallpaperSaved = true;
+
+    const wallpaper = {
+      url: conversation.wallpaper.url,
+      fileName: conversation.wallpaper.fileName,
+      updatedBy: conversation.wallpaper.updatedBy.toString(),
+      updatedAt: conversation.wallpaper.updatedAt.toISOString(),
+    };
+    const event = {
+      type: 'conversation:wallpaper',
+      payload: {
+        participantIds: [currentUserId, otherUserId],
+        wallpaper,
+        updatedAt: updatedAt.toISOString(),
+      },
+    };
+    connectionManager.sendToUser(currentUserId, event);
+    connectionManager.sendToUser(otherUserId, event);
+
+    if (previousConversation?.wallpaper?.url && previousConversation.wallpaper.url !== fileUrl) {
+      deleteUploadedFile(previousConversation.wallpaper.url);
+    }
+    return res.status(200).json({
+      wallpaper,
+      wallpaperUpdatedAt: updatedAt.toISOString(),
+    });
+  } catch (error) {
+    if (req.file && !wallpaperSaved) deleteUploadedFile(`/uploads/${req.file.filename}`);
+    next(error);
+  }
+}
+
+export async function removeConversationWallpaper(req, res, next) {
+  try {
+    const currentUserId = req.user.id;
+    const { userId: otherUserId } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(otherUserId) || otherUserId === currentUserId) {
+      return res.status(400).json({ message: 'A valid conversation partner is required' });
+    }
+
+    const otherUser = await User.findById(otherUserId).select('_id');
+    if (!otherUser) return res.status(404).json({ message: 'User not found' });
+
+    const conversationKey = getConversationKey(currentUserId, otherUserId);
+    const updatedAt = new Date();
+    const conversation = await Conversation.findOneAndUpdate(
+      { conversationKey },
+      { $set: { wallpaper: null, wallpaperUpdatedAt: updatedAt } },
+      { new: false }
+    )
+      .select('wallpaper')
+      .lean();
+    const previousUrl = conversation?.wallpaper?.url;
+
+    connectionManager.sendToUser(currentUserId, {
+      type: 'conversation:wallpaper',
+      payload: {
+        participantIds: [currentUserId, otherUserId],
+        wallpaper: null,
+        updatedAt: updatedAt.toISOString(),
+      },
+    });
+    connectionManager.sendToUser(otherUserId, {
+      type: 'conversation:wallpaper',
+      payload: {
+        participantIds: [currentUserId, otherUserId],
+        wallpaper: null,
+        updatedAt: updatedAt.toISOString(),
+      },
+    });
+
+    if (previousUrl) deleteUploadedFile(previousUrl);
+    return res.status(200).json({ wallpaper: null, wallpaperUpdatedAt: updatedAt });
   } catch (error) {
     next(error);
   }

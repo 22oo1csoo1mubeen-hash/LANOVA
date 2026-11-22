@@ -34,7 +34,7 @@ import Avatar from './Avatar';
 import EmojiPicker from './EmojiPicker';
 import UserInfoModal from './UserInfoModal';
 import ConfirmModal from './ConfirmModal';
-import { getMediaUrl } from '../utils/api';
+import { api, getMediaUrl } from '../utils/api';
 
 /**
  * Returns icon, color, and descriptive metadata for any shared file extension
@@ -203,6 +203,13 @@ export default function ChatArea({
   currentUserId,
   onTypingChange,
   isPeerTyping = false,
+  wallpaper,
+  onSetWallpaper,
+  onRemoveWallpaper,
+  hasMoreHistory = false,
+  isLoadingOlderHistory = false,
+  historyPageVersion = 0,
+  onLoadOlderHistory,
 }) {
   const [inputText, setInputText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -226,20 +233,11 @@ export default function ChatArea({
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [confirmDeleteMsgId, setConfirmDeleteMsgId] = useState(null);
+  const [isWallpaperUpdating, setIsWallpaperUpdating] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [activeMessageActionsId, setActiveMessageActionsId] = useState(null);
   const [replyToMessage, setReplyToMessage] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
-  const [wallpaper, setWallpaper] = useState(() => {
-    if (!selectedUser?.id || !currentUserId) return null;
-    try {
-      return localStorage.getItem(`lanova_chat_wallpaper_${currentUserId}_${selectedUser.id}`);
-    } catch (error) {
-      console.warn('[ChatArea] Could not load chat wallpaper:', error.message);
-      return null;
-    }
-  });
-
   const messagesContainerRef = useRef(null);
   const inputRef = useRef(null);
   const emojiButtonRef = useRef(null);
@@ -257,6 +255,9 @@ export default function ChatArea({
   const prevMessagesCountRef = useRef(0);
   const prevSelectedUserIdRef = useRef(null);
   const prevMobileOpenRef = useRef(mobileChatOpen);
+  const prevHistoryPageVersionRef = useRef(historyPageVersion);
+  const prevOlderLoadingRef = useRef(isLoadingOlderHistory);
+  const pendingHistoryScrollRef = useRef(null);
 
   const stopTyping = useCallback(() => {
     clearTimeout(typingStopTimeoutRef.current);
@@ -350,25 +351,47 @@ export default function ChatArea({
   }, [activeMatchIndex, matchedMessageIds]);
 
   // Export current conversation transcript to a text file
-  const handleExportChat = () => {
-    if (!sortedMessages.length) {
-      alert('No messages to export in this conversation.');
-      return;
+  const handleExportChat = async () => {
+    if (!selectedUser?.id) return;
+    try {
+      const { messages: allMessages } = await api.get(
+        `/api/messages/${selectedUser.id}?limit=all`
+      );
+      if (!allMessages?.length) {
+        alert('No messages to export in this conversation.');
+        return;
+      }
+
+      const transcript = allMessages
+        .map((message) => {
+          const senderName =
+            message.senderId?.toString() === currentUserId?.toString()
+              ? 'You'
+              : selectedUser.username || 'Peer';
+          const time = message.createdAt
+            ? new Date(message.createdAt).toLocaleTimeString([], {
+                hour: 'numeric',
+                minute: '2-digit',
+              })
+            : '';
+          const content =
+            message.content ||
+            (message.fileUrl ? '[File attachment]' : message.imageUrl ? '[Image]' : '');
+          return `[${formatChatDateDivider(message.createdAt)} ${time}] ${senderName}: ${content}`;
+        })
+        .join('\n');
+      const header = `========================================\nLANOVA Chat Transcript with ${selectedUser.username || 'Peer'}\nExported: ${new Date().toLocaleString()}\nTotal Messages: ${allMessages.length}\n========================================\n\n`;
+      const blob = new Blob([header + transcript], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `lanova-chat-${selectedUser.username || 'conversation'}-${Date.now()}.txt`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      console.error('[ChatArea] Could not export complete conversation:', error);
+      alert(`Could not export this conversation: ${error.message}`);
     }
-    const transcript = sortedMessages
-      .map(
-        (m) =>
-          `[${formatChatDateDivider(m.createdAt)} ${m.time || ''}] ${m.sender === 'me' ? 'You' : selectedUser?.username || 'Peer'}: ${m.text || (m.fileUrl ? '[File attachment]' : m.imageUrl ? '[Image]' : '')}`
-      )
-      .join('\n');
-    const header = `========================================\nLANOVA Chat Transcript with ${selectedUser?.username || 'Peer'}\nExported: ${new Date().toLocaleString()}\nTotal Messages: ${sortedMessages.length}\n========================================\n\n`;
-    const blob = new Blob([header + transcript], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `lanova-chat-${selectedUser?.username || 'conversation'}-${Date.now()}.txt`;
-    a.click();
-    URL.revokeObjectURL(url);
   };
 
   // Clear conversation history
@@ -407,50 +430,33 @@ export default function ChatArea({
   const handleWallpaperSelected = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = '';
-    if (!file || !selectedUser?.id || !currentUserId) return;
+    if (!file || !selectedUser?.id) return;
     if (!file.type.startsWith('image/')) {
       alert('Choose an image file for the chat wallpaper.');
       return;
     }
 
+    setIsWallpaperUpdating(true);
     try {
-      const source = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(new Error('Could not read the selected image.'));
-        reader.readAsDataURL(file);
-      });
-      const image = await new Promise((resolve, reject) => {
-        const element = new Image();
-        element.onload = () => resolve(element);
-        element.onerror = () => reject(new Error('The selected file is not a readable image.'));
-        element.src = source;
-      });
-      const scale = Math.min(1, 1800 / Math.max(image.width, image.height));
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.max(1, Math.round(image.width * scale));
-      canvas.height = Math.max(1, Math.round(image.height * scale));
-      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
-      localStorage.setItem(
-        `lanova_chat_wallpaper_${currentUserId}_${selectedUser.id}`,
-        dataUrl
-      );
-      setWallpaper(dataUrl);
+      await onSetWallpaper?.(file);
     } catch (error) {
       console.error('[ChatArea] Could not save chat wallpaper:', error);
       alert(`Could not save this wallpaper: ${error.message}`);
+    } finally {
+      setIsWallpaperUpdating(false);
     }
   };
 
-  const handleRemoveWallpaper = () => {
-    if (!selectedUser?.id || !currentUserId) return;
+  const handleRemoveWallpaper = async () => {
+    if (!selectedUser?.id) return;
+    setIsWallpaperUpdating(true);
     try {
-      localStorage.removeItem(`lanova_chat_wallpaper_${currentUserId}_${selectedUser.id}`);
-      setWallpaper(null);
+      await onRemoveWallpaper?.();
     } catch (error) {
       console.error('[ChatArea] Could not remove chat wallpaper:', error);
       alert(`Could not remove this wallpaper: ${error.message}`);
+    } finally {
+      setIsWallpaperUpdating(false);
     }
     setShowMoreMenu(false);
   };
@@ -732,10 +738,29 @@ export default function ChatArea({
     const prevCount = prevMessagesCountRef.current;
     const userChanged = prevSelectedUserIdRef.current !== selectedUser?.id;
     const mobileOpened = !prevMobileOpenRef.current && mobileChatOpen;
+    const olderPageLoaded = prevHistoryPageVersionRef.current !== historyPageVersion;
+    const loadingFinished = prevOlderLoadingRef.current && !isLoadingOlderHistory;
 
     prevMessagesCountRef.current = currentCount;
     prevSelectedUserIdRef.current = selectedUser?.id;
     prevMobileOpenRef.current = mobileChatOpen;
+    prevHistoryPageVersionRef.current = historyPageVersion;
+    prevOlderLoadingRef.current = isLoadingOlderHistory;
+
+    if (olderPageLoaded && pendingHistoryScrollRef.current) {
+      const previousPosition = pendingHistoryScrollRef.current;
+      pendingHistoryScrollRef.current = null;
+      requestAnimationFrame(() => {
+        const container = messagesContainerRef.current;
+        if (container) {
+          container.scrollTop =
+            previousPosition.scrollTop + container.scrollHeight - previousPosition.scrollHeight;
+        }
+      });
+      return;
+    }
+
+    if (loadingFinished) pendingHistoryScrollRef.current = null;
 
     if (searchQuery.trim()) {
       return;
@@ -762,7 +787,15 @@ export default function ChatArea({
         setShowScrollBottom(true);
       }
     }
-  }, [sortedMessages, selectedUser?.id, mobileChatOpen, searchQuery, forceScrollToBottom]);
+  }, [
+    sortedMessages,
+    selectedUser?.id,
+    mobileChatOpen,
+    searchQuery,
+    historyPageVersion,
+    isLoadingOlderHistory,
+    forceScrollToBottom,
+  ]);
 
   // 3. Keep messages pinned to bottom on window resize (e.g. mobile keyboard toggle or device orientation)
   useEffect(() => {
@@ -787,13 +820,23 @@ export default function ChatArea({
     const isNear = distanceFromBottom < 120;
     isNearBottomRef.current = isNear;
 
+    if (
+      scrollTop < 100 &&
+      hasMoreHistory &&
+      !isLoadingOlderHistory &&
+      !pendingHistoryScrollRef.current
+    ) {
+      pendingHistoryScrollRef.current = { scrollTop, scrollHeight };
+      onLoadOlderHistory?.();
+    }
+
     // Show floating button when scrolled up (> 140px away from bottom) and there is scrollable content
     if (scrollHeight > clientHeight + 80 && distanceFromBottom > 140) {
       setShowScrollBottom(true);
     } else {
       setShowScrollBottom(false);
     }
-  }, []);
+  }, [hasMoreHistory, isLoadingOlderHistory, onLoadOlderHistory]);
 
   // 5. Automatic scroll-down button click handler
   const handleScrollToBottomClick = useCallback(() => {
@@ -1041,23 +1084,31 @@ export default function ChatArea({
               <button
                 type="button"
                 className="chat-dropdown-item"
+                disabled={isWallpaperUpdating}
                 onClick={() => {
                   setShowMoreMenu(false);
                   wallpaperInputRef.current?.click();
                 }}
               >
                 <ImageIcon size={15} />
-                <span>{wallpaper ? 'Change chat wallpaper' : 'Set chat wallpaper'}</span>
+                <span>
+                  {isWallpaperUpdating
+                    ? 'Saving shared wallpaper...'
+                    : wallpaper?.url
+                      ? 'Change shared wallpaper'
+                      : 'Set shared wallpaper'}
+                </span>
               </button>
 
-              {wallpaper && (
+              {wallpaper?.url && (
                 <button
                   type="button"
                   className="chat-dropdown-item"
+                  disabled={isWallpaperUpdating}
                   onClick={handleRemoveWallpaper}
                 >
                   <X size={15} />
-                  <span>Remove wallpaper</span>
+                  <span>Remove shared wallpaper</span>
                 </button>
               )}
 
@@ -1195,13 +1246,18 @@ export default function ChatArea({
           style={
             wallpaper
               ? {
-                  backgroundImage: `linear-gradient(rgba(7, 11, 8, 0.72), rgba(7, 11, 8, 0.72)), url("${wallpaper}")`,
+                  backgroundImage: `linear-gradient(rgba(7, 11, 8, 0.72), rgba(7, 11, 8, 0.72)), url("${getMediaUrl(wallpaper.url)}")`,
                   backgroundPosition: 'center',
                   backgroundSize: 'cover',
                 }
               : undefined
           }
         >
+        {(hasMoreHistory || isLoadingOlderHistory) && (
+          <div className="chat-history-loader" role="status">
+            {isLoadingOlderHistory ? 'Loading older messages...' : 'Scroll up to load older messages'}
+          </div>
+        )}
         {sortedMessages.length === 0 ? (
           <div className="chat-empty-convo anim-fade-in">
             <span className="empty-convo-pill">

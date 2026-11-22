@@ -113,6 +113,10 @@ export default function ChatPage() {
 
   const [conversations, setConversations] = useState({});
   const [loadedHistory, setLoadedHistory] = useState(new Set());
+  const [hasMoreHistory, setHasMoreHistory] = useState({});
+  const [loadingOlderHistory, setLoadingOlderHistory] = useState({});
+  const [historyPageVersions, setHistoryPageVersions] = useState({});
+  const [conversationWallpapers, setConversationWallpapers] = useState({});
   const [typingUserIds, setTypingUserIds] = useState(new Set());
   const [isPageVisible, setIsPageVisible] = useState(
     () => typeof document !== 'undefined' && document.visibilityState === 'visible'
@@ -121,6 +125,8 @@ export default function ChatPage() {
     () => typeof window !== 'undefined' && window.innerWidth <= 768
   );
   const typingTimeoutsRef = useRef(new Map());
+  const loadingOlderUserIdsRef = useRef(new Set());
+  const wallpaperVersionsRef = useRef(new Map());
   const lastReadRequestRef = useRef(null);
 
   useEffect(() => {
@@ -200,13 +206,38 @@ export default function ChatPage() {
     let isMounted = true;
     async function fetchHistory() {
       try {
-        const data = await api.get(`/api/messages/${selectedUserId}`);
+        const data = await api.get(`/api/messages/${selectedUserId}?limit=50`);
         if (isMounted && data?.messages) {
           const formatted = data.messages.map((m) => formatMessage(m, user?.id));
-          setConversations((prev) => ({
+          setConversations((prev) => {
+            const existing = prev[selectedUserId] || [];
+            const merged = new Map(formatted.map((message) => [message.id, message]));
+            existing.forEach((message) => merged.set(message.id, message));
+            return {
+              ...prev,
+              [selectedUserId]: sortMessagesChronologically([...merged.values()]),
+            };
+          });
+          setHasMoreHistory((prev) => ({
             ...prev,
-            [selectedUserId]: sortMessagesChronologically(formatted),
+            [selectedUserId]: Boolean(data.hasMore),
           }));
+          const fetchedWallpaperVersion =
+            data.wallpaperUpdatedAt || data.wallpaper?.updatedAt || null;
+          const latestWallpaperVersion = wallpaperVersionsRef.current.get(selectedUserId);
+          if (
+            !latestWallpaperVersion ||
+            (fetchedWallpaperVersion &&
+              Date.parse(fetchedWallpaperVersion) >= Date.parse(latestWallpaperVersion))
+          ) {
+            if (fetchedWallpaperVersion) {
+              wallpaperVersionsRef.current.set(selectedUserId, fetchedWallpaperVersion);
+            }
+            setConversationWallpapers((prev) => ({
+              ...prev,
+              [selectedUserId]: data.wallpaper || null,
+            }));
+          }
           setLoadedHistory((prev) => new Set(prev).add(selectedUserId));
         }
       } catch (err) {
@@ -283,6 +314,26 @@ export default function ChatPage() {
             ...prev,
             [peerId]: [],
           }));
+          setHasMoreHistory((prev) => ({ ...prev, [peerId]: false }));
+        }
+      } else if (type === 'conversation:wallpaper' && payload?.participantIds) {
+        const peerId = payload.participantIds.find(
+          (participantId) => participantId.toString() !== user?.id?.toString()
+        );
+        if (peerId) {
+          const incomingVersion = payload.updatedAt || payload.wallpaper?.updatedAt;
+          const latestVersion = wallpaperVersionsRef.current.get(peerId);
+          if (
+            !latestVersion ||
+            !incomingVersion ||
+            Date.parse(incomingVersion) >= Date.parse(latestVersion)
+          ) {
+            if (incomingVersion) wallpaperVersionsRef.current.set(peerId, incomingVersion);
+            setConversationWallpapers((prev) => ({
+              ...prev,
+              [peerId]: payload.wallpaper || null,
+            }));
+          }
         }
       } else if (type === 'message:deleted' && payload) {
         // Individual message deleted in real time
@@ -323,11 +374,13 @@ export default function ChatPage() {
       } else if (type === 'messages:receipt' && payload) {
         const peerId = payload.senderId === user?.id ? payload.receiverId : payload.senderId;
         const messageIds = new Set(payload.messageIds || []);
-        if (peerId && (messageIds.size > 0 || payload.lastReadMessageId)) {
+        const receiptBoundaryId =
+          payload.lastReadMessageId || payload.lastDeliveredMessageId || null;
+        if (peerId && (messageIds.size > 0 || receiptBoundaryId)) {
           setConversations((prev) => {
             const messages = prev[peerId] || [];
-            const readThroughIndex = payload.lastReadMessageId
-              ? messages.findIndex((message) => message.id === payload.lastReadMessageId)
+            const receiptBoundaryIndex = receiptBoundaryId
+              ? messages.findIndex((message) => message.id === receiptBoundaryId)
               : -1;
             const statusRank = { sent: 0, delivered: 1, read: 2 };
             return {
@@ -335,7 +388,9 @@ export default function ChatPage() {
               [peerId]: messages.map((message, index) => {
                 const isCoveredByReceipt =
                   messageIds.has(message.id) ||
-                  (readThroughIndex >= 0 && index <= readThroughIndex && message.sender === 'me');
+                  (receiptBoundaryIndex >= 0 &&
+                    index <= receiptBoundaryIndex &&
+                    message.sender === 'me');
                 if (!isCoveredByReceipt) return message;
                 const status =
                   (statusRank[payload.status] || 0) >=
@@ -576,12 +631,13 @@ export default function ChatPage() {
         console.error('[ChatPage] Failed to delete message:', err.message);
         // Reload history if delete failed
         try {
-          const data = await api.get(`/api/messages/${selectedUserId}`);
+          const data = await api.get(`/api/messages/${selectedUserId}?limit=all`);
           if (data?.messages) {
             setConversations((prev) => ({
               ...prev,
               [selectedUserId]: data.messages.map((m) => formatMessage(m, user?.id)),
             }));
+            setHasMoreHistory((prev) => ({ ...prev, [selectedUserId]: false }));
           }
         } catch {}
         alert(`Failed to delete message: ${err.message}`);
@@ -599,6 +655,7 @@ export default function ChatPage() {
         ...prev,
         [targetUserId]: [],
       }));
+      setHasMoreHistory((prev) => ({ ...prev, [targetUserId]: false }));
 
       // 2. Delete messages permanently from MongoDB
       try {
@@ -608,12 +665,13 @@ export default function ChatPage() {
         console.error('[ChatPage] Failed to clear conversation from database:', err.message);
         // Reload if delete failed
         try {
-          const data = await api.get(`/api/messages/${targetUserId}`);
+          const data = await api.get(`/api/messages/${targetUserId}?limit=all`);
           if (data?.messages) {
             setConversations((prev) => ({
               ...prev,
               [targetUserId]: data.messages.map((m) => formatMessage(m, user?.id)),
             }));
+            setHasMoreHistory((prev) => ({ ...prev, [targetUserId]: false }));
           }
         } catch {}
         alert(`Failed to clear conversation: ${err.message}`);
@@ -626,19 +684,97 @@ export default function ChatPage() {
     () => conversations[selectedUser?.id] || EMPTY_MESSAGES,
     [conversations, selectedUser?.id]
   );
-  const unreadMessageIds = useMemo(
-    () =>
-      currentMessages
-        .filter((message) => message.sender === 'other' && !message.readAt)
-        .map((message) => message.id),
-    [currentMessages]
+  const loadOlderHistory = useCallback(
+    async (conversationUserId) => {
+      if (
+        !conversationUserId ||
+        !hasMoreHistory[conversationUserId] ||
+        loadingOlderUserIdsRef.current.has(conversationUserId)
+      ) {
+        return;
+      }
+
+      const currentList = conversations[conversationUserId] || [];
+      const oldestMessage = currentList.find((message) => !message.id.startsWith('temp_'));
+      if (!oldestMessage) return;
+
+      loadingOlderUserIdsRef.current.add(conversationUserId);
+      setLoadingOlderHistory((prev) => ({ ...prev, [conversationUserId]: true }));
+      try {
+        const data = await api.get(
+          `/api/messages/${conversationUserId}?limit=50&before=${encodeURIComponent(oldestMessage.id)}`
+        );
+        const olderMessages = (data.messages || []).map((message) => formatMessage(message, user?.id));
+        setConversations((prev) => {
+          const merged = new Map(olderMessages.map((message) => [message.id, message]));
+          (prev[conversationUserId] || []).forEach((message) => merged.set(message.id, message));
+          return {
+            ...prev,
+            [conversationUserId]: sortMessagesChronologically([...merged.values()]),
+          };
+        });
+        setHasMoreHistory((prev) => ({
+          ...prev,
+          [conversationUserId]: Boolean(data.hasMore),
+        }));
+        setHistoryPageVersions((prev) => ({
+          ...prev,
+          [conversationUserId]: (prev[conversationUserId] || 0) + 1,
+        }));
+      } catch (error) {
+        console.error(`[ChatPage] Failed to load older messages for ${conversationUserId}:`, error);
+        alert(`Could not load older messages: ${error.message}`);
+      } finally {
+        loadingOlderUserIdsRef.current.delete(conversationUserId);
+        setLoadingOlderHistory((prev) => ({ ...prev, [conversationUserId]: false }));
+      }
+    },
+    [conversations, hasMoreHistory, user?.id]
   );
+  const setSharedWallpaper = useCallback(
+    async (file) => {
+      if (!selectedUserId || !file) return;
+      const formData = new FormData();
+      formData.append('image', file);
+      const data = await api.upload(
+        `/api/messages/${selectedUserId}/wallpaper`,
+        formData,
+        { method: 'PUT' }
+      );
+      if (data.wallpaperUpdatedAt) {
+        wallpaperVersionsRef.current.set(selectedUserId, data.wallpaperUpdatedAt);
+      }
+      setConversationWallpapers((prev) => ({
+        ...prev,
+        [selectedUserId]: data.wallpaper,
+      }));
+    },
+    [selectedUserId]
+  );
+  const removeSharedWallpaper = useCallback(async () => {
+    if (!selectedUserId) return;
+    const data = await api.del(`/api/messages/${selectedUserId}/wallpaper`);
+    if (data.wallpaperUpdatedAt) {
+      wallpaperVersionsRef.current.set(selectedUserId, data.wallpaperUpdatedAt);
+    }
+    setConversationWallpapers((prev) => ({
+      ...prev,
+      [selectedUserId]: null,
+    }));
+  }, [selectedUserId]);
+  const lastUnreadIncomingMessage = useMemo(() => {
+    for (let index = currentMessages.length - 1; index >= 0; index--) {
+      const message = currentMessages[index];
+      if (message.sender === 'other' && !message.readAt) return message;
+    }
+    return null;
+  }, [currentMessages]);
 
   useEffect(() => {
     const canMarkRead =
       selectedUserId &&
       loadedHistory.has(selectedUserId) &&
-      unreadMessageIds.length > 0 &&
+      lastUnreadIncomingMessage &&
       isConnected &&
       isPageVisible &&
       (!isMobileViewport || mobileChatOpen);
@@ -647,9 +783,9 @@ export default function ChatPage() {
       return;
     }
 
-    const requestKey = `${selectedUserId}:${unreadMessageIds.join(',')}`;
+    const requestKey = `${selectedUserId}:${lastUnreadIncomingMessage.id}`;
     if (lastReadRequestRef.current === requestKey) return;
-    if (markConversationRead(selectedUserId, unreadMessageIds[unreadMessageIds.length - 1])) {
+    if (markConversationRead(selectedUserId, lastUnreadIncomingMessage.id)) {
       lastReadRequestRef.current = requestKey;
     }
   }, [
@@ -657,10 +793,10 @@ export default function ChatPage() {
     isMobileViewport,
     isPageVisible,
     loadedHistory,
+    lastUnreadIncomingMessage,
     markConversationRead,
     mobileChatOpen,
     selectedUserId,
-    unreadMessageIds,
   ]);
 
   const handleTypingChange = useCallback(
@@ -668,6 +804,10 @@ export default function ChatPage() {
     [sendTypingStatus]
   );
   const isPeerTyping = selectedUser ? typingUserIds.has(selectedUser.id) : false;
+  const loadSelectedOlderHistory = useCallback(
+    () => loadOlderHistory(selectedUser?.id),
+    [loadOlderHistory, selectedUser?.id]
+  );
 
   return (
     <div
@@ -696,6 +836,13 @@ export default function ChatPage() {
         currentUserId={user?.id}
         onTypingChange={handleTypingChange}
         isPeerTyping={isPeerTyping}
+        wallpaper={conversationWallpapers[selectedUser?.id] || null}
+        onSetWallpaper={setSharedWallpaper}
+        onRemoveWallpaper={removeSharedWallpaper}
+        hasMoreHistory={Boolean(hasMoreHistory[selectedUser?.id])}
+        isLoadingOlderHistory={Boolean(loadingOlderHistory[selectedUser?.id])}
+        historyPageVersion={historyPageVersions[selectedUser?.id] || 0}
+        onLoadOlderHistory={loadSelectedOlderHistory}
       />
     </div>
   );

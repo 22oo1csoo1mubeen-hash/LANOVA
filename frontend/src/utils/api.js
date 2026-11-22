@@ -83,17 +83,18 @@ export const api = {
     const baseUrl = getApiBaseUrl();
     const url = `${baseUrl}${endpoint}`;
     const token = sessionStorage.getItem('lanova_token');
+    const { method = 'POST', headers: extraHeaders = {}, ...fetchOptions } = options;
 
     const headers = {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers,
+      ...extraHeaders,
     };
 
     const response = await fetch(url, {
-      method: 'POST',
+      method,
       headers,
       body: formData,
-      ...options,
+      ...fetchOptions,
     });
 
     const data = await response.json().catch(() => ({}));
