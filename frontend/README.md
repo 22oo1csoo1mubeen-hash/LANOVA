@@ -24,6 +24,9 @@ It features zero third-party cloud requirements, dynamic host IP detection, auto
 - **💬 Real-Time Messaging**: Built on native WebSockets with full duplex bidirectional updates and optimistic message delivery.
 - **📎 WhatsApp-Style File Sharing (Any Extension)**: Send documents, audio, videos, archives, and code files of **any extension** up to **100MB** directly over LAN with colored file type badges and direct download buttons.
 - **📸 High-Resolution Photo Sharing**: Share images with live upload progress, staging preview, captions, and responsive thumbnails with fullscreen modal viewing.
+- **💬 Interactive Messages**: Clickable web/video links, emoji reactions, sender-only message editing, and replies by long-press/context menu or swipe.
+- **⌨️ Live Typing & Read Receipts**: Show a themed typing indicator and sent, delivered, and read checkmarks; unread messages are marked read only while their chat is visible.
+- **🖼️ Per-Chat Wallpaper**: Set an image for a single conversation; it persists in this browser and is scoped to the signed-in user and chat partner.
 - **🗑️ Real-Time Chat & Message Deletion**: "Delete Chat" clears the entire conversation history with real-time peer sync and disk media cleanup; single message deletion on hover with confirmation modals.
 - **💾 Uncapped Message History**: Displays complete chronological conversation history from MongoDB without artificial caps or missing messages.
 - **🟢 Live User Presence**: Real-time indicators showing online and offline states for all registered network peers.

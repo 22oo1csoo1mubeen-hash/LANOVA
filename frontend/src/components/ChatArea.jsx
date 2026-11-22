@@ -26,6 +26,9 @@ import {
   FileSpreadsheet,
   FileAudio,
   FileVideo,
+  Reply,
+  Pencil,
+  Check,
 } from 'lucide-react';
 import Avatar from './Avatar';
 import EmojiPicker from './EmojiPicker';
@@ -138,6 +141,48 @@ function getMessageDateKey(dateStr) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+function renderLinkedText(text) {
+  const linkPattern =
+    /https?:\/\/[^\s<]+|www\.[^\s<]+|(?:[a-z0-9-]+\.)+[a-z]{2,}(?:\/[^\s<]*)?/gi;
+  const parts = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = linkPattern.exec(text)) !== null) {
+    let visibleUrl = match[0];
+    let trailing = '';
+    while (/[.,!?;:)\]}]$/.test(visibleUrl)) {
+      trailing = visibleUrl.slice(-1) + trailing;
+      visibleUrl = visibleUrl.slice(0, -1);
+    }
+
+    if (!visibleUrl) continue;
+    parts.push(text.slice(lastIndex, match.index));
+    const href = /^https?:\/\//i.test(visibleUrl) ? visibleUrl : `https://${visibleUrl}`;
+    let safeUrl;
+    try {
+      const parsed = new URL(href);
+      safeUrl = parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null;
+    } catch {
+      safeUrl = null;
+    }
+    parts.push(
+      safeUrl ? (
+        <a key={`${match.index}-${visibleUrl}`} href={safeUrl} target="_blank" rel="noopener noreferrer">
+          {visibleUrl}
+        </a>
+      ) : (
+        visibleUrl
+      )
+    );
+    parts.push(trailing);
+    lastIndex = match.index + match[0].length;
+  }
+
+  parts.push(text.slice(lastIndex));
+  return parts;
+}
+
 /**
  * ChatArea — central conversation panel.
  * Contains the conversation header with search & more options,
@@ -153,6 +198,11 @@ export default function ChatArea({
   onBack,
   onClearConversation,
   onDeleteMessage,
+  onEditMessage,
+  onToggleReaction,
+  currentUserId,
+  onTypingChange,
+  isPeerTyping = false,
 }) {
   const [inputText, setInputText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
@@ -177,18 +227,47 @@ export default function ChatArea({
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [confirmDeleteMsgId, setConfirmDeleteMsgId] = useState(null);
   const [isMuted, setIsMuted] = useState(false);
+  const [activeMessageActionsId, setActiveMessageActionsId] = useState(null);
+  const [replyToMessage, setReplyToMessage] = useState(null);
+  const [editingMessage, setEditingMessage] = useState(null);
+  const [wallpaper, setWallpaper] = useState(() => {
+    if (!selectedUser?.id || !currentUserId) return null;
+    try {
+      return localStorage.getItem(`lanova_chat_wallpaper_${currentUserId}_${selectedUser.id}`);
+    } catch (error) {
+      console.warn('[ChatArea] Could not load chat wallpaper:', error.message);
+      return null;
+    }
+  });
 
   const messagesContainerRef = useRef(null);
   const inputRef = useRef(null);
   const emojiButtonRef = useRef(null);
   const fileInputRef = useRef(null);
   const imageInputRef = useRef(null);
+  const wallpaperInputRef = useRef(null);
   const menuRef = useRef(null);
+  const longPressTimerRef = useRef(null);
+  const typingStopTimeoutRef = useRef(null);
+  const typingReceiverRef = useRef(null);
+  const touchStartRef = useRef(null);
+  const didLongPressRef = useRef(false);
   const cursorPosRef = useRef(null);
   const isNearBottomRef = useRef(true);
   const prevMessagesCountRef = useRef(0);
   const prevSelectedUserIdRef = useRef(null);
   const prevMobileOpenRef = useRef(mobileChatOpen);
+
+  const stopTyping = useCallback(() => {
+    clearTimeout(typingStopTimeoutRef.current);
+    if (typingReceiverRef.current) {
+      onTypingChange?.(typingReceiverRef.current, false);
+      typingReceiverRef.current = null;
+    }
+  }, [onTypingChange]);
+
+  useEffect(() => () => clearTimeout(longPressTimerRef.current), []);
+  useEffect(() => () => stopTyping(), [stopTyping]);
 
   // Close more menu on outside click
   useEffect(() => {
@@ -303,6 +382,112 @@ export default function ChatArea({
     if (onClearConversation && selectedUser) {
       onClearConversation(selectedUser.id);
     }
+  };
+
+  const handleReplyToMessage = (msg) => {
+    setReplyToMessage({
+      id: msg.id,
+      content: msg.text || (msg.imageUrl ? 'Photo' : 'File'),
+      senderId: msg.senderId,
+    });
+    setEditingMessage(null);
+    setInputText('');
+    setActiveMessageActionsId(null);
+    inputRef.current?.focus();
+  };
+
+  const handleEditThisMessage = (msg) => {
+    setEditingMessage(msg);
+    setReplyToMessage(null);
+    setInputText(msg.text || '');
+    setActiveMessageActionsId(null);
+    inputRef.current?.focus();
+  };
+
+  const handleWallpaperSelected = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !selectedUser?.id || !currentUserId) return;
+    if (!file.type.startsWith('image/')) {
+      alert('Choose an image file for the chat wallpaper.');
+      return;
+    }
+
+    try {
+      const source = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Could not read the selected image.'));
+        reader.readAsDataURL(file);
+      });
+      const image = await new Promise((resolve, reject) => {
+        const element = new Image();
+        element.onload = () => resolve(element);
+        element.onerror = () => reject(new Error('The selected file is not a readable image.'));
+        element.src = source;
+      });
+      const scale = Math.min(1, 1800 / Math.max(image.width, image.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+      localStorage.setItem(
+        `lanova_chat_wallpaper_${currentUserId}_${selectedUser.id}`,
+        dataUrl
+      );
+      setWallpaper(dataUrl);
+    } catch (error) {
+      console.error('[ChatArea] Could not save chat wallpaper:', error);
+      alert(`Could not save this wallpaper: ${error.message}`);
+    }
+  };
+
+  const handleRemoveWallpaper = () => {
+    if (!selectedUser?.id || !currentUserId) return;
+    try {
+      localStorage.removeItem(`lanova_chat_wallpaper_${currentUserId}_${selectedUser.id}`);
+      setWallpaper(null);
+    } catch (error) {
+      console.error('[ChatArea] Could not remove chat wallpaper:', error);
+      alert(`Could not remove this wallpaper: ${error.message}`);
+    }
+    setShowMoreMenu(false);
+  };
+
+  const handleMessageTouchStart = (event, msg) => {
+    if (msg.id.startsWith('temp_') || event.target.closest('a, button')) return;
+    const touch = event.touches[0];
+    touchStartRef.current = { x: touch.clientX, y: touch.clientY, message: msg };
+    didLongPressRef.current = false;
+    clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = setTimeout(() => {
+      didLongPressRef.current = true;
+      setActiveMessageActionsId(msg.id);
+      if (navigator.vibrate) navigator.vibrate(25);
+    }, 500);
+  };
+
+  const handleMessageTouchMove = (event) => {
+    if (!touchStartRef.current) return;
+    const touch = event.touches[0];
+    const distance = Math.hypot(
+      touch.clientX - touchStartRef.current.x,
+      touch.clientY - touchStartRef.current.y
+    );
+    if (distance > 12) clearTimeout(longPressTimerRef.current);
+  };
+
+  const handleMessageTouchEnd = (event) => {
+    clearTimeout(longPressTimerRef.current);
+    if (!touchStartRef.current) return;
+    const touch = event.changedTouches[0];
+    const deltaX = touch.clientX - touchStartRef.current.x;
+    const deltaY = touch.clientY - touchStartRef.current.y;
+    if (!didLongPressRef.current && Math.abs(deltaX) > 60 && Math.abs(deltaX) > Math.abs(deltaY)) {
+      handleReplyToMessage(touchStartRef.current.message);
+    }
+    touchStartRef.current = null;
   };
 
   const formatFileSize = (bytes) => {
@@ -626,9 +811,19 @@ export default function ChatArea({
     }
   }, [inputText]);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     if (e) e.preventDefault();
-    if (!inputText.trim() && !stagedImage && !stagedFile) return;
+    if (!inputText.trim() && !stagedImage && !stagedFile && !editingMessage) return;
+    stopTyping();
+
+    if (editingMessage) {
+      if (!inputText.trim()) return;
+      const saved = await onEditMessage?.(editingMessage.id, inputText.trim());
+      if (!saved) return;
+      setEditingMessage(null);
+      setInputText('');
+      return;
+    }
 
     let attachmentPayload = null;
     if (stagedImage) {
@@ -657,9 +852,10 @@ export default function ChatArea({
       };
     }
 
-    onSendMessage(inputText.trim(), attachmentPayload);
+    onSendMessage(inputText.trim(), attachmentPayload, { replyTo: replyToMessage });
 
     setInputText('');
+    setReplyToMessage(null);
     clearStagedImage();
     clearStagedFile();
     cursorPosRef.current = 0;
@@ -707,8 +903,21 @@ export default function ChatArea({
   }, []);
 
   const handleInputChange = (e) => {
-    setInputText(e.target.value);
+    const nextText = e.target.value;
+    setInputText(nextText);
     cursorPosRef.current = e.target.selectionStart;
+
+    if (nextText.trim() && selectedUser?.id) {
+      if (typingReceiverRef.current !== selectedUser.id) {
+        stopTyping();
+        typingReceiverRef.current = selectedUser.id;
+        onTypingChange?.(selectedUser.id, true);
+      }
+      clearTimeout(typingStopTimeoutRef.current);
+      typingStopTimeoutRef.current = setTimeout(stopTyping, 1500);
+    } else {
+      stopTyping();
+    }
   };
 
   const handleInputSelect = (e) => {
@@ -768,11 +977,22 @@ export default function ChatArea({
                 className={`status-bullet ${selectedUser?.status === 'online' ? 'online' : 'offline'}`}
               />
               <span>
-                {selectedUser?.status === 'online'
-                  ? 'Online'
-                  : selectedUser?.lastSeen
-                    ? `Last seen ${selectedUser.lastSeen}`
-                    : 'Offline'}
+                {isPeerTyping ? (
+                  <span className="chat-typing-status" role="status" aria-label="Typing">
+                    typing
+                    <span className="chat-typing-dots" aria-hidden="true">
+                      <i />
+                      <i />
+                      <i />
+                    </span>
+                  </span>
+                ) : selectedUser?.status === 'online' ? (
+                  'Online'
+                ) : selectedUser?.lastSeen ? (
+                  `Last seen ${selectedUser.lastSeen}`
+                ) : (
+                  'Offline'
+                )}
               </span>
             </div>
           </div>
@@ -817,6 +1037,29 @@ export default function ChatArea({
                 <Search size={15} />
                 <span>Search in chat</span>
               </button>
+
+              <button
+                type="button"
+                className="chat-dropdown-item"
+                onClick={() => {
+                  setShowMoreMenu(false);
+                  wallpaperInputRef.current?.click();
+                }}
+              >
+                <ImageIcon size={15} />
+                <span>{wallpaper ? 'Change chat wallpaper' : 'Set chat wallpaper'}</span>
+              </button>
+
+              {wallpaper && (
+                <button
+                  type="button"
+                  className="chat-dropdown-item"
+                  onClick={handleRemoveWallpaper}
+                >
+                  <X size={15} />
+                  <span>Remove wallpaper</span>
+                </button>
+              )}
 
               <button
                 type="button"
@@ -869,6 +1112,13 @@ export default function ChatArea({
               )}
             </div>
           )}
+          <input
+            ref={wallpaperInputRef}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={handleWallpaperSelected}
+          />
         </div>
       </div>
 
@@ -934,6 +1184,23 @@ export default function ChatArea({
           className="chat-messages-container"
           ref={messagesContainerRef}
           onScroll={handleScroll}
+          onClick={(event) => {
+            if (event.target.closest('.message-context-menu')) return;
+            if (didLongPressRef.current) {
+              didLongPressRef.current = false;
+              return;
+            }
+            setActiveMessageActionsId(null);
+          }}
+          style={
+            wallpaper
+              ? {
+                  backgroundImage: `linear-gradient(rgba(7, 11, 8, 0.72), rgba(7, 11, 8, 0.72)), url("${wallpaper}")`,
+                  backgroundPosition: 'center',
+                  backgroundSize: 'cover',
+                }
+              : undefined
+          }
         >
         {sortedMessages.length === 0 ? (
           <div className="chat-empty-convo anim-fade-in">
@@ -966,6 +1233,20 @@ export default function ChatArea({
                       ? getFileInfo(msg.fileMeta?.fileName || msg.text)
                       : null;
                     const FileBadgeIcon = fileInfo ? fileInfo.Icon : File;
+                    const groupedReactions = (msg.reactions || []).reduce((groups, reaction) => {
+                      const group = groups.find((item) => item.emoji === reaction.emoji);
+                      if (group) {
+                        group.count += 1;
+                        group.mine ||= reaction.userId === currentUserId;
+                      } else {
+                        groups.push({
+                          emoji: reaction.emoji,
+                          count: 1,
+                          mine: reaction.userId === currentUserId,
+                        });
+                      }
+                      return groups;
+                    }, []);
 
                     return (
                       <div
@@ -994,20 +1275,53 @@ export default function ChatArea({
                       className={`chat-bubble ${isMe ? 'bubble-sent' : 'bubble-received'}${
                         isActiveMatch ? ' active-match' : isMatched ? ' search-match' : ''
                       }${hasImage ? ' has-image' : ''}${hasFile ? ' has-file' : ''}`}
+                      onContextMenu={(event) => {
+                        if (msg.id.startsWith('temp_') || event.target.closest('a')) return;
+                        event.preventDefault();
+                        setActiveMessageActionsId(msg.id);
+                      }}
+                      onTouchStart={(event) => handleMessageTouchStart(event, msg)}
+                      onTouchMove={handleMessageTouchMove}
+                      onTouchEnd={handleMessageTouchEnd}
                     >
+                      {msg.replyTo?.messageId && (
+                        <button
+                          type="button"
+                          className="message-reply-quote"
+                          onClick={() => {
+                            document
+                              .getElementById(`msg-${msg.replyTo.messageId}`)
+                              ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          }}
+                        >
+                          <span>
+                            {msg.replyTo.senderId === currentUserId
+                              ? 'You'
+                              : selectedUser?.username || 'Peer'}
+                          </span>
+                          <small>{msg.replyTo.content}</small>
+                        </button>
+                      )}
+
                       {/* Photo / Image bubble */}
                       {hasImage && (
                         <div
                           className="bubble-image-wrap"
-                          onClick={() =>
+                          onClick={(event) => {
+                            if (didLongPressRef.current) {
+                              didLongPressRef.current = false;
+                              event.preventDefault();
+                              event.stopPropagation();
+                              return;
+                            }
                             setActiveLightboxImage({
                               url: resolvedImageUrl,
                               fileName: msg.imageMeta?.fileName || 'image.png',
                               time: msg.time,
                               sender: isMe ? 'You' : selectedUser?.username || 'Peer',
                               caption: msg.text,
-                            })
-                          }
+                            });
+                          }}
                           title="Click to view full image"
                         >
                           <img
@@ -1036,6 +1350,12 @@ export default function ChatArea({
                             onClick={(e) => {
                               // If tapped or clicked on download button, do not open file
                               if (e.target.closest('.file-card-download-btn')) {
+                                return;
+                              }
+                              if (didLongPressRef.current) {
+                                didLongPressRef.current = false;
+                                e.preventDefault();
+                                e.stopPropagation();
                                 return;
                               }
                               handleOpenFile(resolvedFileUrl);
@@ -1111,21 +1431,122 @@ export default function ChatArea({
                             hasImage || hasFile ? ' bubble-caption' : ''
                           }`}
                         >
-                          {msg.text}
+                          {renderLinkedText(msg.text)}
                         </span>
                       )}
 
                       <div className="bubble-meta">
+                        {msg.editedAt && <span className="bubble-edited-label">edited</span>}
                         <span className="bubble-time">{msg.time}</span>
                         {isMe && (
-                          <CheckCheck
-                            size={14}
-                            className="bubble-check"
-                            strokeWidth={2.2}
-                          />
+                          msg.deliveryStatus === 'sent' ? (
+                            <Check
+                              size={14}
+                              className="bubble-check status-sent"
+                              strokeWidth={2.2}
+                              title="Sent"
+                              aria-label="Sent"
+                            />
+                          ) : (
+                            <CheckCheck
+                              size={14}
+                              className={`bubble-check status-${msg.deliveryStatus || 'sent'}`}
+                              strokeWidth={2.2}
+                              title={
+                                msg.deliveryStatus === 'read'
+                                  ? 'Read'
+                                  : msg.deliveryStatus === 'delivered'
+                                    ? 'Delivered'
+                                    : 'Sent'
+                              }
+                              aria-label={
+                                msg.deliveryStatus === 'read'
+                                  ? 'Read'
+                                  : msg.deliveryStatus === 'delivered'
+                                    ? 'Delivered'
+                                    : 'Sent'
+                              }
+                            />
+                          )
                         )}
                       </div>
+
+                      {groupedReactions.length > 0 && (
+                        <div className="message-reactions" aria-label="Message reactions">
+                          {groupedReactions.map((reaction) => (
+                            <button
+                              type="button"
+                              key={reaction.emoji}
+                              className={`message-reaction${reaction.mine ? ' mine' : ''}`}
+                              onClick={() => onToggleReaction?.(msg.id, reaction.emoji)}
+                              aria-label={`${reaction.emoji} reaction, ${reaction.count}`}
+                            >
+                              <span>{reaction.emoji}</span>
+                              <small>{reaction.count}</small>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
+                    {activeMessageActionsId === msg.id && (
+                      <div
+                        className={`message-context-menu ${isMe ? 'sent-context-menu' : ''}`}
+                        role="menu"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          didLongPressRef.current = false;
+                        }}
+                      >
+                        <div className="message-reaction-options">
+                          {['👍', '❤️', '😂', '😮', '😢', '🙏'].map((emoji) => (
+                            <button
+                              type="button"
+                              key={emoji}
+                              onClick={() => {
+                                onToggleReaction?.(msg.id, emoji);
+                                setActiveMessageActionsId(null);
+                              }}
+                              aria-label={`React ${emoji}`}
+                            >
+                              {emoji}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="message-action-options">
+                          <button
+                            type="button"
+                            onClick={() => handleReplyToMessage(msg)}
+                            title="Reply"
+                          >
+                            <Reply size={15} />
+                            Reply
+                          </button>
+                          {isMe && onEditMessage && (
+                            <button
+                              type="button"
+                              onClick={() => handleEditThisMessage(msg)}
+                              title="Edit message"
+                            >
+                              <Pencil size={14} />
+                              Edit
+                            </button>
+                          )}
+                          {onDeleteMessage && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setConfirmDeleteMsgId(msg.id);
+                                setActiveMessageActionsId(null);
+                              }}
+                              title="Delete message"
+                            >
+                              <Trash2 size={14} />
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1161,6 +1582,27 @@ export default function ChatArea({
 
       {/* Message Composer */}
       <div className="chat-composer-wrap" role="region" aria-label="Message composer">
+        {(replyToMessage || editingMessage) && (
+          <div className="composer-message-context">
+            <div>
+              <strong>{editingMessage ? 'Editing message' : `Replying to ${replyToMessage.senderId === currentUserId ? 'yourself' : selectedUser?.username || 'Peer'}`}</strong>
+              {!editingMessage && <span>{replyToMessage.content}</span>}
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setReplyToMessage(null);
+                setEditingMessage(null);
+                setInputText('');
+              }}
+              aria-label="Cancel reply or edit"
+              title="Cancel"
+            >
+              <X size={15} />
+            </button>
+          </div>
+        )}
+
         {/* Staged Image Preview Bar (Appears above the input bar) */}
         {stagedImage && (
           <div className="chat-staged-image-bar anim-fade-up">

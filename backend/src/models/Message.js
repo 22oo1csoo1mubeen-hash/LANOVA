@@ -64,6 +64,29 @@ const messageSchema = new mongoose.Schema(
       mimeType: { type: String, default: null },
       extension: { type: String, default: null },
     },
+    editedAt: {
+      type: Date,
+      default: null,
+    },
+    deliveredAt: {
+      type: Date,
+      default: null,
+    },
+    readAt: {
+      type: Date,
+      default: null,
+    },
+    replyTo: {
+      messageId: { type: String, default: null },
+      content: { type: String, default: null, maxlength: 5000 },
+      senderId: { type: String, default: null },
+    },
+    reactions: [
+      {
+        userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+        emoji: { type: String, required: true, maxlength: 8 },
+      },
+    ],
   },
   {
     timestamps: true,
@@ -73,6 +96,8 @@ const messageSchema = new mongoose.Schema(
 // Compound indexes for rapid conversation history retrieval between two users
 messageSchema.index({ sender: 1, receiver: 1, createdAt: 1 });
 messageSchema.index({ receiver: 1, sender: 1, createdAt: 1 });
+messageSchema.index({ sender: 1, receiver: 1, deliveredAt: 1 });
+messageSchema.index({ sender: 1, receiver: 1, readAt: 1 });
 
 // Ensure message formatting matches PRD requirements and omits internal fields
 messageSchema.set('toJSON', {
@@ -87,6 +112,19 @@ messageSchema.set('toJSON', {
     ret.imageMeta = ret.imageMeta || null;
     ret.fileUrl = ret.fileUrl || null;
     ret.fileMeta = ret.fileMeta || null;
+    ret.deliveredAt = ret.deliveredAt || null;
+    ret.readAt = ret.readAt || null;
+    ret.replyTo = ret.replyTo?.messageId
+      ? {
+          messageId: ret.replyTo.messageId,
+          content: ret.replyTo.content,
+          senderId: ret.replyTo.senderId,
+        }
+      : null;
+    ret.reactions = (ret.reactions || []).map((reaction) => ({
+      userId: reaction.userId.toString(),
+      emoji: reaction.emoji,
+    }));
     delete ret._id;
     delete ret.sender;
     delete ret.receiver;

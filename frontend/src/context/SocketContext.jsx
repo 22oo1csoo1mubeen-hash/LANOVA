@@ -189,11 +189,37 @@ export function SocketProvider({ children }) {
         imageMeta: extra?.imageMeta || null,
         fileUrl: extra?.fileUrl || null,
         fileMeta: extra?.fileMeta || null,
+        replyToId: extra?.replyToId || null,
       },
     };
 
     socketRef.current.send(JSON.stringify(payload));
   }, []);
+
+  const sendSocketEvent = useCallback((type, payload) => {
+    if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    socketRef.current.send(JSON.stringify({ type, payload }));
+    return true;
+  }, []);
+
+  const sendTypingStatus = useCallback(
+    (receiverId, isTyping) =>
+      sendSocketEvent(isTyping ? 'typing:start' : 'typing:stop', { receiverId }),
+    [sendSocketEvent]
+  );
+
+  const markMessageDelivered = useCallback(
+    (messageId) => sendSocketEvent('message:delivered', { messageId }),
+    [sendSocketEvent]
+  );
+
+  const markConversationRead = useCallback(
+    (otherUserId, lastReadMessageId) =>
+      sendSocketEvent('conversation:read', { otherUserId, lastReadMessageId }),
+    [sendSocketEvent]
+  );
 
   const isUserOnline = useCallback(
     (userId) => {
@@ -209,6 +235,9 @@ export function SocketProvider({ children }) {
         onlineUserIds,
         isUserOnline,
         sendMessage,
+        sendTypingStatus,
+        markMessageDelivered,
+        markConversationRead,
         addMessageListener,
       }}
     >

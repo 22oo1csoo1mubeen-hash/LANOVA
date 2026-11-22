@@ -77,6 +77,8 @@ backend/
 - **Authenticated Handshake**: Authenticates client connections via query parameter `?token=<JWT>` or initial authentication event.
 - **Active Connection Manager**: Tracks active TCP sockets mapped by user ID. Supports multiple connections per user if opened in multiple tabs.
 - **Multi-Type Message Delivery**: Routes text, image, and generic file messages in real-time. Automatically acknowledges message receipt and database persistence to the sender.
+- **Message Interactions**: Supports sender-only edits, participant emoji reactions, and reply snapshots; edits and reactions synchronize over WebSocket.
+- **Typing & Read Receipts**: Relays ephemeral typing events and persists sent, delivered, and read timestamps for WhatsApp-style message status.
 - **Real-Time Peer Sync for Deletions**: Broadcasts `conversation:cleared` and `message:deleted` events so peer chat windows update instantaneously without refreshing.
 - **Presence Broadcasts**: Automatically broadcasts `user:status` events (`online` / `offline`) to all active peers on connection and disconnection.
 - **Offline Message Persistence**: Messages sent to an offline user are safely stored in MongoDB; recipient receives them upon opening the conversation.
@@ -89,6 +91,7 @@ backend/
 ### 4. Reliable Uncapped Message Storage
 - **Unbounded History**: Eliminated artificial message caps and limit cutoffs; complete conversations are stored in MongoDB and returned in exact chronological order.
 - **Granular Deletions**: Supports both clearing an entire conversation (`DELETE /api/messages/:userId`) and deleting individual messages (`DELETE /api/messages/item/:messageId`).
+- **History Receipts**: Retrieving a conversation marks pending incoming messages delivered; the client marks them read only while that conversation is visible.
 
 ### 5. Network Detection & LAN Connectivity
 - **Physical Adapter Detection**: Uses `os.networkInterfaces()` in `networkUtils.js` to inspect active physical adapters (Ethernet, Wi-Fi), automatically excluding internal loopback and virtual adapters (VMware, VirtualBox, WSL).
@@ -192,11 +195,25 @@ Retrieves chronological message history between caller and target user without a
         "receiverId": "6701...bc",
         "content": "Hello Bob! Testing LAN chat.",
         "messageType": "text",
+        "deliveredAt": null,
+        "readAt": null,
         "createdAt": "2026-10-04T08:47:00.000Z"
       }
     ]
   }
   ```
+
+#### `PUT /api/messages/item/:messageId`
+Edits a message authored by the authenticated user. Content must contain 1–5000 characters.
+- **Request**: `{ "content": "Updated message text" }`
+- **Response**: Updated message, including `editedAt`.
+- **Event**: Sends `message:updated` to connected participants.
+
+#### `POST /api/messages/item/:messageId/reactions`
+Toggles a supported reaction (`👍`, `❤️`, `😂`, `😮`, `😢`, or `🙏`) for the authenticated participant. Repeating the same reaction removes it.
+- **Request**: `{ "emoji": "❤️" }`
+- **Response**: The current reaction list.
+- **Event**: Sends `message:reaction` to connected participants.
 
 #### `POST /api/messages/upload`
 Uploads an image (PNG, JPG, GIF, WebP, SVG, BMP up to 15MB) with optional caption for private LAN sharing.
@@ -294,6 +311,7 @@ Supports text, image, and generic file messages:
     "receiverId": "6701...bc",
     "content": "Here is the presentation file",
     "messageType": "file",
+    "replyToId": "6701...ef",
     "fileUrl": "/uploads/file-1791915000000-987654321.pdf",
     "fileMeta": {
       "fileName": "Annual_Report.pdf",
@@ -304,6 +322,7 @@ Supports text, image, and generic file messages:
   }
 }
 ```
+`replyToId` is optional and must identify a message in the same conversation. The server stores a quote snapshot with the new message.
 
 #### 2. `users:online`
 ```json
@@ -311,6 +330,37 @@ Supports text, image, and generic file messages:
   "type": "users:online"
 }
 ```
+
+#### 3. `typing:start` and `typing:stop`
+Relay typing state to a conversation partner; these events are ephemeral and are not written to MongoDB.
+```json
+{
+  "type": "typing:start",
+  "payload": { "receiverId": "6701...bc" }
+}
+```
+
+#### 4. `message:delivered`
+Acknowledge that a message reached the recipient's active client.
+```json
+{
+  "type": "message:delivered",
+  "payload": { "messageId": "6701...ef" }
+}
+```
+
+#### 5. `conversation:read`
+Mark incoming messages read when the conversation is visible to the recipient.
+```json
+{
+  "type": "conversation:read",
+  "payload": {
+    "otherUserId": "6701...9a",
+    "lastReadMessageId": "6701...ef"
+  }
+}
+```
+`lastReadMessageId` identifies the newest incoming message visible to the reader; all earlier incoming messages in that conversation are marked read as well.
 
 ---
 
@@ -382,7 +432,19 @@ Supports text, image, and generic file messages:
 }
 ```
 
-#### 5. `user:status` (Presence Broadcast)
+#### 5. `message:updated` (Message Edit Event)
+Contains the edited message ID, participants, new content, and `editedAt`.
+
+#### 6. `message:reaction` (Message Reaction Event)
+Contains the message ID, participants, and the complete current reaction list.
+
+#### 7. `messages:receipt` (Delivery / Read Receipt)
+Delivery receipts contain `messageIds`; read receipts contain `lastReadMessageId` to represent all messages read up to that point. Both include the `delivered` or `read` status, participants, and receipt timestamp.
+
+#### 8. `typing:start` and `typing:stop` (Typing Indicator)
+Relays the typing user's ID to the recipient. The frontend clears stale typing state after a short timeout.
+
+#### 9. `user:status` (Presence Broadcast)
 ```json
 {
   "type": "user:status",
@@ -393,7 +455,7 @@ Supports text, image, and generic file messages:
 }
 ```
 
-#### 6. `users:online` (Online Snapshot)
+#### 10. `users:online` (Online Snapshot)
 ```json
 {
   "type": "users:online",
@@ -403,7 +465,7 @@ Supports text, image, and generic file messages:
 }
 ```
 
-#### 7. `error`
+#### 11. `error`
 ```json
 {
   "type": "error",
@@ -438,20 +500,21 @@ CLIENT_URL=http://localhost:5173,http://localhost:5174
 
 ## 🧪 Automated Testing
 
-The backend includes **137 tests across 5 standalone test suites** built with Node's native assert capabilities:
+The backend includes **173 checks across 6 standalone test suites** built with Node's native assert capabilities:
 
 ```bash
 cd backend
 
-# Run all test suites sequentially (137 tests):
+# Run all test suites sequentially (173 checks):
 npm run test:all
 
 # Or run individual suites:
-npm run test           # Milestone 1: Auth, password hashing, user listings (22 tests)
-npm run test:chat      # Milestone 2: WebSocket handshake, messaging, presence (28 tests)
-npm run test:network   # Milestone 3: Interface inspection, IP detection, telemetry (16 tests)
-npm run test:image     # Image uploads, lightbox support & media disk cleanup (40 tests)
-npm run test:files     # Generic file sharing (any extension), uncapped history & deletions (31 tests)
+npm run test           # Auth, password hashing, user listings (24 checks)
+npm run test:chat      # WebSocket messaging, edits, reactions, replies & receipts (58 checks)
+npm run test:network   # Interface inspection, IP detection, telemetry (29 checks)
+npm run test:image     # Image uploads, lightbox support & media cleanup (25 checks)
+npm run test:files     # Generic file sharing, history beyond 100 messages & deletions (35 checks)
+npm run test:gridfs    # GridFS persistence (2 checks)
 ```
 
 > [!IMPORTANT]

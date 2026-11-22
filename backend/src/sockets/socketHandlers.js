@@ -28,27 +28,178 @@ export async function handleSocketMessage(ws, user, rawData) {
 
   const { type, payload } = messageData || {};
 
-  switch (type) {
-    case 'message:send':
-      await handleSendMessage(ws, user, payload);
-      break;
+  try {
+    switch (type) {
+      case 'message:send':
+        await handleSendMessage(ws, user, payload);
+        break;
 
-    case 'users:online':
-      connectionManager.send(ws, {
-        type: 'users:online',
-        payload: {
-          onlineUserIds: connectionManager.getOnlineUserIds(),
-        },
-      });
-      break;
+      case 'typing:start':
+        handleTypingStatus(ws, user, payload, true);
+        break;
 
-    default:
-      connectionManager.send(ws, {
-        type: 'error',
-        payload: { message: `Unsupported event type: ${type}` },
-      });
-      break;
+      case 'typing:stop':
+        handleTypingStatus(ws, user, payload, false);
+        break;
+
+      case 'message:delivered':
+        await handleMessageDelivered(ws, user, payload);
+        break;
+
+      case 'conversation:read':
+        await handleConversationRead(ws, user, payload);
+        break;
+
+      case 'users:online':
+        connectionManager.send(ws, {
+          type: 'users:online',
+          payload: {
+            onlineUserIds: connectionManager.getOnlineUserIds(),
+          },
+        });
+        break;
+
+      default:
+        connectionManager.send(ws, {
+          type: 'error',
+          payload: { message: `Unsupported event type: ${type}` },
+        });
+        break;
+    }
+  } catch (error) {
+    console.error(`[Socket Error] Failed to process ${type}:`, error.message);
+    connectionManager.send(ws, {
+      type: 'error',
+      payload: { message: `Failed to process ${type}` },
+    });
   }
+}
+
+function handleTypingStatus(ws, user, payload, isTyping) {
+  const { receiverId } = payload || {};
+  const senderId = user._id.toString();
+  if (!receiverId || typeof receiverId !== 'string' || !mongoose.Types.ObjectId.isValid(receiverId)) {
+    return connectionManager.send(ws, {
+      type: 'error',
+      payload: { message: 'Valid receiver ID is required for typing status' },
+    });
+  }
+  if (receiverId === senderId) {
+    return connectionManager.send(ws, {
+      type: 'error',
+      payload: { message: 'Cannot send typing status to yourself' },
+    });
+  }
+
+  connectionManager.sendToUser(receiverId, {
+    type: isTyping ? 'typing:start' : 'typing:stop',
+    payload: { senderId },
+  });
+}
+
+async function handleMessageDelivered(ws, user, payload) {
+  const { messageId } = payload || {};
+  if (!messageId || !mongoose.Types.ObjectId.isValid(messageId)) {
+    return connectionManager.send(ws, {
+      type: 'error',
+      payload: { message: 'Valid message ID is required for delivery receipt' },
+    });
+  }
+
+  const deliveredAt = new Date();
+  const message = await Message.findOneAndUpdate(
+    {
+      _id: messageId,
+      receiver: user._id,
+      deliveredAt: null,
+    },
+    { $set: { deliveredAt } },
+    { new: true }
+  );
+  if (!message) return;
+
+  connectionManager.sendToUser(message.sender.toString(), {
+    type: 'messages:receipt',
+    payload: {
+      senderId: message.sender.toString(),
+      receiverId: message.receiver.toString(),
+      messageIds: [message._id.toString()],
+      status: 'delivered',
+      timestamp: deliveredAt.toISOString(),
+    },
+  });
+}
+
+async function handleConversationRead(ws, user, payload) {
+  const { otherUserId, lastReadMessageId } = payload || {};
+  const readerId = user._id.toString();
+  if (!otherUserId || typeof otherUserId !== 'string' || !mongoose.Types.ObjectId.isValid(otherUserId)) {
+    return connectionManager.send(ws, {
+      type: 'error',
+      payload: { message: 'Valid conversation user ID is required for read receipt' },
+    });
+  }
+  if (otherUserId === readerId) {
+    return connectionManager.send(ws, {
+      type: 'error',
+      payload: { message: 'Cannot mark your own conversation as read' },
+    });
+  }
+
+  if (!lastReadMessageId || !mongoose.Types.ObjectId.isValid(lastReadMessageId)) {
+    return connectionManager.send(ws, {
+      type: 'error',
+      payload: { message: 'Valid last-read message ID is required' },
+    });
+  }
+
+  const lastReadMessage = await Message.findOne({
+    _id: lastReadMessageId,
+    sender: otherUserId,
+    receiver: user._id,
+  })
+    .select('_id createdAt')
+    .lean();
+  if (!lastReadMessage) {
+    return connectionManager.send(ws, {
+      type: 'error',
+      payload: { message: 'Last-read message is not part of this conversation' },
+    });
+  }
+
+  const readFilter = {
+    sender: otherUserId,
+    receiver: user._id,
+    readAt: null,
+    $or: [
+      { createdAt: { $lt: lastReadMessage.createdAt } },
+      {
+        createdAt: lastReadMessage.createdAt,
+        _id: { $lte: lastReadMessage._id },
+      },
+    ],
+  };
+  const readAt = new Date();
+  await Message.updateMany(
+    { ...readFilter, deliveredAt: null },
+    { $set: { deliveredAt: readAt } }
+  );
+  const readResult = await Message.updateMany(
+    readFilter,
+    { $set: { readAt } }
+  );
+  if (readResult.modifiedCount === 0) return;
+
+  connectionManager.sendToUser(otherUserId, {
+    type: 'messages:receipt',
+    payload: {
+      senderId: otherUserId,
+      receiverId: readerId,
+      lastReadMessageId: lastReadMessage._id.toString(),
+      status: 'read',
+      timestamp: readAt.toISOString(),
+    },
+  });
 }
 
 /**
@@ -67,6 +218,7 @@ async function handleSendMessage(ws, sender, payload) {
       imageMeta,
       fileUrl,
       fileMeta,
+      replyToId,
     } = payload || {};
 
     // 1. Validate payload presence
@@ -122,6 +274,34 @@ async function handleSendMessage(ws, sender, payload) {
       });
     }
 
+    let replyTo = null;
+    if (replyToId) {
+      if (!mongoose.Types.ObjectId.isValid(replyToId)) {
+        return connectionManager.send(ws, {
+          type: 'error',
+          payload: { message: 'Invalid reply target message ID' },
+        });
+      }
+      const sourceMessage = await Message.findOne({
+        _id: replyToId,
+        $or: [
+          { sender: senderId, receiver: receiverId },
+          { sender: receiverId, receiver: senderId },
+        ],
+      });
+      if (!sourceMessage) {
+        return connectionManager.send(ws, {
+          type: 'error',
+          payload: { message: 'Reply target does not belong to this conversation' },
+        });
+      }
+      replyTo = {
+        messageId: sourceMessage._id.toString(),
+        content: sourceMessage.content || (sourceMessage.imageUrl ? 'Photo' : 'File'),
+        senderId: sourceMessage.sender.toString(),
+      };
+    }
+
     // 6. Persist message in MongoDB FIRST (guarantee persistence before delivery attempt)
     let resolvedType = 'text';
     if (hasFile || messageType === 'file') {
@@ -148,6 +328,7 @@ async function handleSendMessage(ws, sender, payload) {
         mimeType: fileMeta.mimeType || 'application/octet-stream',
         extension: fileMeta.extension || '',
       } : undefined,
+      replyTo,
     });
 
     const messagePayload = {
@@ -160,6 +341,15 @@ async function handleSendMessage(ws, sender, payload) {
       imageMeta: savedMessage.imageMeta,
       fileUrl: savedMessage.fileUrl,
       fileMeta: savedMessage.fileMeta,
+      replyTo: savedMessage.replyTo?.messageId ? {
+        messageId: savedMessage.replyTo.messageId,
+        content: savedMessage.replyTo.content,
+        senderId: savedMessage.replyTo.senderId,
+      } : null,
+      editedAt: savedMessage.editedAt,
+      reactions: [],
+      deliveredAt: savedMessage.deliveredAt,
+      readAt: savedMessage.readAt,
       createdAt: savedMessage.createdAt.toISOString(),
     };
 

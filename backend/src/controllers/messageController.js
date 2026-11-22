@@ -35,6 +35,32 @@ export async function getConversation(req, res, next) {
       ],
     };
 
+    const pendingDeliveries = await Message.find({
+      sender: otherUserId,
+      receiver: currentUserId,
+      deliveredAt: null,
+    })
+      .select('_id')
+      .lean();
+    if (pendingDeliveries.length > 0) {
+      const deliveredAt = new Date();
+      const messageIds = pendingDeliveries.map((message) => message._id);
+      await Message.updateMany(
+        { _id: { $in: messageIds }, deliveredAt: null },
+        { $set: { deliveredAt } }
+      );
+      connectionManager.sendToUser(otherUserId, {
+        type: 'messages:receipt',
+        payload: {
+          senderId: otherUserId,
+          receiverId: currentUserId,
+          messageIds: messageIds.map((id) => id.toString()),
+          status: 'delivered',
+          timestamp: deliveredAt.toISOString(),
+        },
+      });
+    }
+
     let messages;
     // If a specific limit is provided, fetch the most recent messages in chronological order
     if (req.query.limit && req.query.limit !== 'all') {
@@ -227,4 +253,136 @@ export async function deleteMessage(req, res, next) {
   }
 }
 
+async function findMessageForParticipant(messageId, currentUserId) {
+  if (!mongoose.Types.ObjectId.isValid(messageId)) {
+    return { status: 400, error: 'Invalid message ID format' };
+  }
+
+  const message = await Message.findById(messageId);
+  if (!message) return { status: 404, error: 'Message not found' };
+
+  const userId = currentUserId.toString();
+  const senderId = message.sender.toString();
+  const receiverId = message.receiver.toString();
+  if (senderId !== userId && receiverId !== userId) {
+    return { status: 403, error: 'Not authorized to modify this message' };
+  }
+
+  return { message, senderId, receiverId, userId };
+}
+
+export async function editMessage(req, res, next) {
+  try {
+    const result = await findMessageForParticipant(req.params.messageId, req.user.id);
+    if (result.error) {
+      return res.status(result.status).json({ message: result.error });
+    }
+    if (result.senderId !== result.userId) {
+      return res.status(403).json({ message: 'Only the sender can edit this message' });
+    }
+
+    const content = typeof req.body.content === 'string' ? req.body.content.trim() : '';
+    if (!content) return res.status(400).json({ message: 'Message content cannot be empty' });
+    if (content.length > 5000) {
+      return res.status(400).json({ message: 'Message exceeds maximum length of 5000 characters' });
+    }
+
+    result.message.content = content;
+    result.message.editedAt = new Date();
+    await result.message.save();
+
+    const payload = {
+      id: result.message._id.toString(),
+      senderId: result.senderId,
+      receiverId: result.receiverId,
+      content: result.message.content,
+      editedAt: result.message.editedAt.toISOString(),
+    };
+    connectionManager.sendToUser(result.receiverId, {
+      type: 'message:updated',
+      payload,
+    });
+    if (result.senderId !== result.receiverId) {
+      connectionManager.sendToUser(result.senderId, {
+        type: 'message:updated',
+        payload,
+      });
+    }
+
+    return res.status(200).json({ success: true, message: result.message.toJSON() });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function toggleMessageReaction(req, res, next) {
+  try {
+    const result = await findMessageForParticipant(req.params.messageId, req.user.id);
+    if (result.error) {
+      return res.status(result.status).json({ message: result.error });
+    }
+
+    const { emoji } = req.body || {};
+    const allowedEmojis = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+    if (!allowedEmojis.includes(emoji)) {
+      return res.status(400).json({ message: 'Unsupported reaction' });
+    }
+
+    const userObjectId = new mongoose.Types.ObjectId(result.userId);
+    let updatedMessage = await Message.findOneAndUpdate(
+      {
+        _id: result.message._id,
+        reactions: { $elemMatch: { userId: userObjectId, emoji } },
+      },
+      { $pull: { reactions: { userId: userObjectId } } },
+      { new: true }
+    );
+
+    if (!updatedMessage) {
+      updatedMessage = await Message.findOneAndUpdate(
+        { _id: result.message._id, 'reactions.userId': userObjectId },
+        { $set: { 'reactions.$.emoji': emoji } },
+        { new: true, runValidators: true }
+      );
+    }
+
+    if (!updatedMessage) {
+      updatedMessage = await Message.findOneAndUpdate(
+        { _id: result.message._id, 'reactions.userId': { $ne: userObjectId } },
+        { $push: { reactions: { userId: userObjectId, emoji } } },
+        { new: true, runValidators: true }
+      );
+    }
+
+    if (!updatedMessage) {
+      return res.status(404).json({ message: 'Message no longer exists' });
+    }
+
+    const reactionPayload = updatedMessage.reactions.map((reaction) => ({
+      userId: reaction.userId.toString(),
+      emoji: reaction.emoji,
+    }));
+    const payload = {
+      messageId: updatedMessage._id.toString(),
+      senderId: result.senderId,
+      receiverId: result.receiverId,
+      reactions: reactionPayload,
+    };
+
+    connectionManager.sendToUser(result.senderId, {
+      type: 'message:reaction',
+      payload,
+    });
+    if (result.receiverId !== result.senderId) {
+      connectionManager.sendToUser(result.receiverId, {
+        type: 'message:reaction',
+        payload,
+      });
+    }
+
+    return res.status(200).json({ success: true, reactions: reactionPayload });
+  } catch (error) {
+    next(error);
+  }
+}
 

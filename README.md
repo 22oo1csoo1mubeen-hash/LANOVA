@@ -56,6 +56,9 @@ Built for computer networks demonstrations, office environments, campus dorms, a
 - **🚀 Real-Time Full-Duplex Chat**: Instant bidirectional messaging powered by native WebSockets (`ws`) with optimistic client UI updates.
 - **📎 WhatsApp-Style File Sharing (Any Extension)**: Share files and documents of **any extension** (`.pdf`, `.docx`, `.xlsx`, `.pptx`, `.zip`, `.rar`, `.mp3`, `.mp4`, `.apk`, code files, etc.) up to **100MB** over LAN with color-coded type badges and one-click direct downloads.
 - **📸 High-Resolution Photo Sharing**: Share images (PNG, JPG, GIF, WebP, SVG, BMP) with responsive thumbnails, captions, and an interactive fullscreen lightbox viewer.
+- **💬 Interactive Messages**: Clickable web/video links, per-message emoji reactions, sender-only editing, and replies by long-press/context menu or swipe.
+- **⌨️ Live Typing & Read Receipts**: Show when a chat partner is typing and distinguish sent, delivered, and read messages with WhatsApp-style checkmarks.
+- **🖼️ Per-Chat Wallpaper**: Choose or remove an image wallpaper for an individual chat. The preference is stored locally in the current browser and scoped to the signed-in user and chat partner.
 - **🗑️ Real-Time Chat & Message Deletion**: "Delete Chat" permanently clears full conversation history and syncs with peers in real-time, plus single message deletion on hover, with automatic cleanup of uploaded media from disk.
 - **💾 Unlimited Conversation History**: No artificial message cutoffs or caps; complete chronological conversations are stored in MongoDB and retrieved seamlessly.
 - **📶 Zero Cloud / 100% LAN First**: Functions completely offline inside your local subnet—no external SaaS, tracking, or cloud dependencies.
@@ -269,6 +272,8 @@ To chat between different computers or smartphones connected to the same Wi-Fi:
 | `POST` | `/api/messages/upload-file` | Yes (`Bearer`) | Upload generic file of **any extension** up to 100MB with optional caption |
 | `DELETE` | `/api/messages/:userId` | Yes (`Bearer`) | Clear entire chat with user, real-time sync with peer, and disk cleanup |
 | `DELETE` | `/api/messages/item/:messageId`| Yes (`Bearer`) | Delete individual message on hover, real-time sync with peer, and media disk cleanup |
+| `PUT` | `/api/messages/item/:messageId` | Yes (`Bearer`) | Edit a message sent by the authenticated user |
+| `POST` | `/api/messages/item/:messageId/reactions` | Yes (`Bearer`) | Toggle one of the supported emoji reactions on a conversation message |
 | `GET` | `/api/network/info` | Yes (`Bearer`) | Retrieve host LAN IP, subnet, ports, and telemetry |
 
 ### WebSocket Endpoint (`/ws`)
@@ -277,12 +282,19 @@ Connect at: `ws://<HOST_IP>:5000/ws?token=<JWT_TOKEN>`
 
 | Direction | Event Name | Payload Structure | Description |
 | :--- | :--- | :--- | :--- |
-| **Client ➔ Server** | `message:send` | `{ receiverId, content, messageType, imageUrl, fileUrl, fileMeta }` | Send a private message (text, image, or generic file) |
+| **Client ➔ Server** | `message:send` | `{ receiverId, content, messageType, imageUrl, fileUrl, fileMeta, replyToId? }` | Send a private message (text, image, or generic file), optionally replying to an existing message |
+| **Client ➔ Server** | `typing:start` / `typing:stop` | `{ receiverId }` | Send ephemeral typing state to a conversation partner |
+| **Client ➔ Server** | `message:delivered` | `{ messageId }` | Acknowledge that a message reached the recipient's active client |
+| **Client ➔ Server** | `conversation:read` | `{ otherUserId, lastReadMessageId }` | Mark incoming messages read through the newest visible message |
 | **Client ➔ Server** | `users:online` | `{}` | Request list of currently online user IDs |
-| **Server ➔ Client** | `message:sent` | `{ id, senderId, receiverId, content, messageType, imageUrl, fileUrl, fileMeta, createdAt }` | Confirmation that message was stored in MongoDB |
+| **Server ➔ Client** | `message:sent` | `{ id, senderId, receiverId, content, messageType, imageUrl, fileUrl, fileMeta, deliveredAt, readAt, createdAt }` | Confirmation that message was stored in MongoDB |
 | **Server ➔ Client** | `message:received`| `{ id, senderId, receiverId, content, messageType, imageUrl, fileUrl, fileMeta, createdAt }` | Real-time incoming message delivered to recipient |
+| **Server ➔ Client** | `messages:receipt` | `{ senderId, receiverId, messageIds \| lastReadMessageId, status, timestamp }` | Synchronize delivery IDs or a read-through boundary with the sender |
+| **Server ➔ Client** | `typing:start` / `typing:stop` | `{ senderId }` | Relay ephemeral typing state |
 | **Server ➔ Client** | `conversation:cleared` | `{ peerId }` | Real-time broadcast notifying peer that chat history was deleted |
 | **Server ➔ Client** | `message:deleted` | `{ messageId, peerId }` | Real-time broadcast notifying peer that a single message was deleted |
+| **Server ➔ Client** | `message:updated` | `{ id, senderId, receiverId, content, editedAt }` | Real-time synchronization of a message edit |
+| **Server ➔ Client** | `message:reaction` | `{ messageId, senderId, receiverId, reactions }` | Real-time synchronization of message reactions |
 | **Server ➔ Client** | `user:status` | `{ userId, status: "online" \| "offline" }` | Presence change broadcast |
 | **Server ➔ Client** | `users:online` | `{ onlineUserIds: [...] }` | Initial list of active user IDs upon connect |
 | **Server ➔ Client** | `error` | `{ message: "..." }` | Error notifications (auth failures, malformed payloads) |
@@ -291,7 +303,7 @@ Connect at: `ws://<HOST_IP>:5000/ws?token=<JWT_TOKEN>`
 
 ## 🧪 Testing & Verification
 
-The backend includes a comprehensive automated test suite with **137 passing tests across 5 test suites**:
+The backend includes **173 passing checks across 6 test suites**, including message interactions, typing/read receipts, and history beyond 100 messages:
 
 ```bash
 cd backend
@@ -304,7 +316,7 @@ npm run test           # Authentication & User Management (Milestone 1)
 npm run test:chat      # Real-time WebSocket Messaging & Persistence (Milestone 2)
 npm run test:network   # LAN IP Detection & Telemetry (Milestone 3)
 npm run test:image     # Image uploads, lightbox support & media disk cleanup
-npm run test:files     # WhatsApp-style file sharing (any extension), unlimited pagination & chat/message deletion
+npm run test:files     # WhatsApp-style file sharing (any extension), uncapped history & chat/message deletion
 ```
 
 > [!NOTE]

@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import ChatUserList from '../components/ChatUserList';
 import ChatArea from '../components/ChatArea';
 import { useAuth } from '../context/AuthContext';
 import { useSocket } from '../context/SocketContext';
 import api from '../utils/api';
 import '../styles/chat.css';
+
+const EMPTY_MESSAGES = [];
 
 /**
  * Format raw message object for display in ChatArea
@@ -47,6 +49,12 @@ function formatMessage(msg, currentUserId) {
     imageMeta: msg.imageMeta || null,
     fileUrl: msg.fileUrl || null,
     fileMeta: msg.fileMeta || null,
+    editedAt: msg.editedAt || null,
+    deliveredAt: msg.deliveredAt || null,
+    readAt: msg.readAt || null,
+    deliveryStatus: msg.readAt ? 'read' : msg.deliveredAt ? 'delivered' : isMe ? 'sent' : null,
+    replyTo: msg.replyTo || null,
+    reactions: msg.reactions || [],
     time: timeStr || 'Just now',
     createdAt: msg.createdAt || new Date().toISOString(),
     read: true,
@@ -75,7 +83,15 @@ function sortMessagesChronologically(list) {
  */
 export default function ChatPage() {
   const { user } = useAuth();
-  const { isUserOnline, sendMessage, addMessageListener } = useSocket();
+  const {
+    isUserOnline,
+    sendMessage,
+    sendTypingStatus,
+    markMessageDelivered,
+    markConversationRead,
+    isConnected,
+    addMessageListener,
+  } = useSocket();
 
   // Initialize state with sessionStorage persistence to maintain selected conversation across page navigation
   const [rawUsers, setRawUsers] = useState(() => {
@@ -97,6 +113,26 @@ export default function ChatPage() {
 
   const [conversations, setConversations] = useState({});
   const [loadedHistory, setLoadedHistory] = useState(new Set());
+  const [typingUserIds, setTypingUserIds] = useState(new Set());
+  const [isPageVisible, setIsPageVisible] = useState(
+    () => typeof document !== 'undefined' && document.visibilityState === 'visible'
+  );
+  const [isMobileViewport, setIsMobileViewport] = useState(
+    () => typeof window !== 'undefined' && window.innerWidth <= 768
+  );
+  const typingTimeoutsRef = useRef(new Map());
+  const lastReadRequestRef = useRef(null);
+
+  useEffect(() => {
+    const updateVisibility = () => setIsPageVisible(document.visibilityState === 'visible');
+    const updateViewport = () => setIsMobileViewport(window.innerWidth <= 768);
+    document.addEventListener('visibilitychange', updateVisibility);
+    window.addEventListener('resize', updateViewport);
+    return () => {
+      document.removeEventListener('visibilitychange', updateVisibility);
+      window.removeEventListener('resize', updateViewport);
+    };
+  }, []);
 
   // 1. Fetch registered users from GET /api/users
   useEffect(() => {
@@ -186,6 +222,7 @@ export default function ChatPage() {
 
   // 4. Listen for real-time WebSocket events (incoming messages & send acks)
   useEffect(() => {
+    const typingTimeouts = typingTimeoutsRef.current;
     const removeListener = addMessageListener((data) => {
       const { type, payload } = data;
 
@@ -205,6 +242,7 @@ export default function ChatPage() {
             [otherUserId]: sortMessagesChronologically([...currentList, formattedMsg]),
           };
         });
+        markMessageDelivered(payload.id);
       } else if (type === 'message:sent' && payload) {
         // Confirmation that message was saved in MongoDB
         const otherUserId = payload.receiverId;
@@ -258,11 +296,97 @@ export default function ChatPage() {
             };
           });
         }
+      } else if (type === 'message:updated' && payload) {
+        const peerId = payload.senderId === user?.id ? payload.receiverId : payload.senderId;
+        if (peerId) {
+          setConversations((prev) => ({
+            ...prev,
+            [peerId]: (prev[peerId] || []).map((message) =>
+              message.id === payload.id
+                ? { ...message, text: payload.content, editedAt: payload.editedAt }
+                : message
+            ),
+          }));
+        }
+      } else if (type === 'message:reaction' && payload) {
+        const peerId = payload.senderId === user?.id ? payload.receiverId : payload.senderId;
+        if (peerId) {
+          setConversations((prev) => ({
+            ...prev,
+            [peerId]: (prev[peerId] || []).map((message) =>
+              message.id === payload.messageId
+                ? { ...message, reactions: payload.reactions }
+                : message
+            ),
+          }));
+        }
+      } else if (type === 'messages:receipt' && payload) {
+        const peerId = payload.senderId === user?.id ? payload.receiverId : payload.senderId;
+        const messageIds = new Set(payload.messageIds || []);
+        if (peerId && (messageIds.size > 0 || payload.lastReadMessageId)) {
+          setConversations((prev) => {
+            const messages = prev[peerId] || [];
+            const readThroughIndex = payload.lastReadMessageId
+              ? messages.findIndex((message) => message.id === payload.lastReadMessageId)
+              : -1;
+            const statusRank = { sent: 0, delivered: 1, read: 2 };
+            return {
+              ...prev,
+              [peerId]: messages.map((message, index) => {
+                const isCoveredByReceipt =
+                  messageIds.has(message.id) ||
+                  (readThroughIndex >= 0 && index <= readThroughIndex && message.sender === 'me');
+                if (!isCoveredByReceipt) return message;
+                const status =
+                  (statusRank[payload.status] || 0) >=
+                  (statusRank[message.deliveryStatus] || 0)
+                    ? payload.status
+                    : message.deliveryStatus;
+                return {
+                  ...message,
+                  deliveryStatus: status,
+                  deliveredAt: message.deliveredAt || payload.timestamp,
+                  readAt: status === 'read' ? message.readAt || payload.timestamp : message.readAt,
+                };
+              }),
+            };
+          });
+        }
+      } else if (type === 'typing:start' && payload?.senderId) {
+        const senderId = payload.senderId.toString();
+        const existingTimeout = typingTimeouts.get(senderId);
+        if (existingTimeout) clearTimeout(existingTimeout);
+        setTypingUserIds((prev) => new Set(prev).add(senderId));
+        const timeout = setTimeout(() => {
+          setTypingUserIds((prev) => {
+            const updated = new Set(prev);
+            updated.delete(senderId);
+            return updated;
+          });
+          typingTimeouts.delete(senderId);
+        }, 5000);
+        typingTimeouts.set(senderId, timeout);
+      } else if (type === 'typing:stop' && payload?.senderId) {
+        const senderId = payload.senderId.toString();
+        const existingTimeout = typingTimeouts.get(senderId);
+        if (existingTimeout) clearTimeout(existingTimeout);
+        typingTimeouts.delete(senderId);
+        setTypingUserIds((prev) => {
+          const updated = new Set(prev);
+          updated.delete(senderId);
+          return updated;
+        });
       }
     });
 
-    return removeListener;
-  }, [addMessageListener, user?.id]);
+    return () => {
+      removeListener();
+      for (const timeout of typingTimeouts.values()) {
+        clearTimeout(timeout);
+      }
+      typingTimeouts.clear();
+    };
+  }, [addMessageListener, markMessageDelivered, user?.id]);
 
   const [mobileChatOpen, setMobileChatOpen] = useState(() => {
     try {
@@ -290,7 +414,7 @@ export default function ChatPage() {
   }, []);
 
   const handleSendMessage = useCallback(
-    async (text, attachmentPayload = null) => {
+    async (text, attachmentPayload = null, messageOptions = {}) => {
       if (!selectedUser) return;
       const trimmedText = typeof text === 'string' ? text.trim() : '';
       if (!trimmedText && !attachmentPayload) return;
@@ -318,6 +442,14 @@ export default function ChatPage() {
         imageMeta: isImage ? (attachmentPayload?.imageMeta || null) : null,
         fileUrl: isFile ? (attachmentPayload?.fileUrl || null) : null,
         fileMeta: isFile ? (attachmentPayload?.fileMeta || null) : null,
+        replyTo: messageOptions.replyTo
+          ? {
+              messageId: messageOptions.replyTo.id,
+              content: messageOptions.replyTo.content,
+              senderId: messageOptions.replyTo.senderId,
+            }
+          : null,
+        deliveryStatus: 'sent',
         time: timeStr,
         createdAt: now.toISOString(),
         read: true,
@@ -361,6 +493,7 @@ export default function ChatPage() {
           imageMeta: finalImageMeta,
           fileUrl: finalFileUrl,
           fileMeta: finalFileMeta,
+          replyToId: messageOptions.replyTo?.id || null,
         });
       } catch (err) {
         console.error('[ChatPage] Failed to send message:', err.message);
@@ -376,6 +509,49 @@ export default function ChatPage() {
       }
     },
     [selectedUser, user?.id, sendMessage]
+  );
+
+  const handleEditMessage = useCallback(
+    async (messageId, content) => {
+      try {
+        const data = await api.put(`/api/messages/item/${messageId}`, { content });
+        const updated = data.message;
+        setConversations((prev) => ({
+          ...prev,
+          [selectedUserId]: (prev[selectedUserId] || []).map((message) =>
+            message.id === messageId
+              ? { ...message, text: updated.content, editedAt: updated.editedAt }
+              : message
+          ),
+        }));
+        return true;
+      } catch (err) {
+        console.error('[ChatPage] Failed to edit message:', err.message);
+        alert(`Failed to edit message: ${err.message}`);
+        return false;
+      }
+    },
+    [selectedUserId]
+  );
+
+  const handleToggleReaction = useCallback(
+    async (messageId, emoji) => {
+      try {
+        const data = await api.post(`/api/messages/item/${messageId}/reactions`, { emoji });
+        setConversations((prev) => ({
+          ...prev,
+          [selectedUserId]: (prev[selectedUserId] || []).map((message) =>
+            message.id === messageId
+              ? { ...message, reactions: data.reactions }
+              : message
+          ),
+        }));
+      } catch (err) {
+        console.error('[ChatPage] Failed to update message reaction:', err.message);
+        alert(`Failed to update reaction: ${err.message}`);
+      }
+    },
+    [selectedUserId]
   );
 
   const handleDeleteMessage = useCallback(
@@ -446,7 +622,52 @@ export default function ChatPage() {
     [user?.id]
   );
 
-  const currentMessages = conversations[selectedUser?.id] || [];
+  const currentMessages = useMemo(
+    () => conversations[selectedUser?.id] || EMPTY_MESSAGES,
+    [conversations, selectedUser?.id]
+  );
+  const unreadMessageIds = useMemo(
+    () =>
+      currentMessages
+        .filter((message) => message.sender === 'other' && !message.readAt)
+        .map((message) => message.id),
+    [currentMessages]
+  );
+
+  useEffect(() => {
+    const canMarkRead =
+      selectedUserId &&
+      loadedHistory.has(selectedUserId) &&
+      unreadMessageIds.length > 0 &&
+      isConnected &&
+      isPageVisible &&
+      (!isMobileViewport || mobileChatOpen);
+    if (!canMarkRead) {
+      lastReadRequestRef.current = null;
+      return;
+    }
+
+    const requestKey = `${selectedUserId}:${unreadMessageIds.join(',')}`;
+    if (lastReadRequestRef.current === requestKey) return;
+    if (markConversationRead(selectedUserId, unreadMessageIds[unreadMessageIds.length - 1])) {
+      lastReadRequestRef.current = requestKey;
+    }
+  }, [
+    isConnected,
+    isMobileViewport,
+    isPageVisible,
+    loadedHistory,
+    markConversationRead,
+    mobileChatOpen,
+    selectedUserId,
+    unreadMessageIds,
+  ]);
+
+  const handleTypingChange = useCallback(
+    (receiverId, isTyping) => sendTypingStatus(receiverId, isTyping),
+    [sendTypingStatus]
+  );
+  const isPeerTyping = selectedUser ? typingUserIds.has(selectedUser.id) : false;
 
   return (
     <div
@@ -462,6 +683,7 @@ export default function ChatPage() {
 
       {/* Main Chat conversation area */}
       <ChatArea
+        key={`${user?.id || ''}-${selectedUser?.id || ''}`}
         selectedUser={selectedUser}
         messages={currentMessages}
         mobileChatOpen={mobileChatOpen}
@@ -469,6 +691,11 @@ export default function ChatPage() {
         onBack={handleBackToUsers}
         onClearConversation={handleClearConversation}
         onDeleteMessage={handleDeleteMessage}
+        onEditMessage={handleEditMessage}
+        onToggleReaction={handleToggleReaction}
+        currentUserId={user?.id}
+        onTypingChange={handleTypingChange}
+        isPeerTyping={isPeerTyping}
       />
     </div>
   );
